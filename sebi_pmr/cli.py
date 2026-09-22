@@ -66,8 +66,32 @@ def cmd_scrape(a) -> int:
 
     stats = run(store, client, objs, periods, limit=a.limit,
                 max_seconds=a.max_seconds, archive=not a.no_archive,
-                redo_errors=a.redo_errors, method=a.method)
+                redo_errors=a.redo_errors, method=a.method,
+                use_roster=not a.no_roster)
     print(stats.summary())
+    store.close()
+    return 0
+
+
+def cmd_roster(a) -> int:
+    """Record who filed each month, from one consolidated export per month.
+
+    The export ignores pmrId and returns every filer for the month in a single
+    response, so this costs one request per month and lets the scrape skip
+    manager-months that have nothing to fetch.
+    """
+    from .roster import build
+
+    store, client = Store(a.db, a.archive_dir), _client(a)
+    start = parse_period(a.since) if a.since else NEW_FORMAT_START
+    end = parse_period(a.until) if a.until else default_end()
+    periods = months_between(start, end)
+    logging.info("building filing roster for %d months (1 request each)", len(periods))
+    summary = build(store, client, periods, save_dir=a.save)
+    print(f"roster built for {summary['months']} months, "
+          f"{summary['filers']:,} manager-month filings recorded")
+    for failure in summary["failed"]:
+        print(f"  could not read {failure}")
     store.close()
     return 0
 
@@ -268,10 +292,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--max-seconds", type=float, help="wall-clock budget for this run")
     sp.add_argument("--only", help="restrict to managers matching this substring")
     sp.add_argument("--no-archive", action="store_true", help="do not keep raw HTML")
+    sp.add_argument("--no-roster", action="store_true",
+                    help="do not skip managers the filing roster says did not file")
     sp.add_argument("--redo-errors", action="store_true", help="retry cells that previously errored")
     sp.add_argument("--method", choices=("post", "get"), default="post",
                     help="how to submit the report form (the site itself POSTs)")
     sp.set_defaults(func=cmd_scrape)
+
+    sp = sub.add_parser("roster", parents=[net],
+                        help="record who filed each month (1 request per month)")
+    sp.add_argument("--since", help="first period YYYY-MM (default 2021-02)")
+    sp.add_argument("--until", help="last period YYYY-MM (default: last completed month)")
+    sp.add_argument("--save", help="directory to keep the consolidated exports in")
+    sp.set_defaults(func=cmd_roster)
 
     sp = sub.add_parser("reparse", help="rebuild rows from the archive (no network)")
     sp.set_defaults(func=cmd_reparse)
