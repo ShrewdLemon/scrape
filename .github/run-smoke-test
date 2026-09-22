@@ -7,6 +7,6 @@
 #
 # Bump the counter (or just edit anything here) to run it again.
 
-run: 5
+run: 6
 requested: 2026-09-22
-reason: see columns 0-95 of the consolidated report
+reason: check whether the XML export carries per-approach detail

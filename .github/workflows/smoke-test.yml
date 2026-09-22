@@ -96,7 +96,12 @@ jobs:
           XLSF=$(ls -S probe/*_excel_*.bin 2>/dev/null | head -1)
           echo "xml payload: ${XMLF:-none}   xls payload: ${XLSF:-none}"
           if [ -n "$XMLF" ]; then
-            python -m sebi_pmr inspect-export --format xml --file "$XMLF"
+            # The XML is ~3x the size of the .xls, so it may carry detail the
+            # consolidated sheet cannot (per investment approach). The leaf
+            # field names settle that.
+            python -m sebi_pmr inspect-export --format xml --file "$XMLF" > xml_map.txt 2>&1 || true
+            echo "===== XML SUMMARY ====="
+            sed -n '1,90p' xml_map.txt
           else
             echo "no XML payload saved; fetching one directly"
             python -m sebi_pmr inspect-export --period "$PERIOD" --format xml \
