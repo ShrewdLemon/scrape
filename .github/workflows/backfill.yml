@@ -90,9 +90,9 @@ jobs:
       - name: Scrape shard ${{ matrix.shard }}
         run: |
           ARGS=""
-          [ -n "${{ inputs.since }}" ] && ARGS="$ARGS --since ${{ inputs.since }}"
-          [ -n "${{ inputs.until }}" ] && ARGS="$ARGS --until ${{ inputs.until }}"
-          [ "${{ inputs.keep_archive }}" != "true" ] && ARGS="$ARGS --no-archive"
+          if [ -n "${{ inputs.since }}" ]; then ARGS="$ARGS --since ${{ inputs.since }}"; fi
+          if [ -n "${{ inputs.until }}" ]; then ARGS="$ARGS --until ${{ inputs.until }}"; fi
+          if [ "${{ inputs.keep_archive }}" != "true" ]; then ARGS="$ARGS --no-archive"; fi
           python -m sebi_pmr --db data/shard-${{ matrix.shard }}.db scrape \
             --shard ${{ matrix.shard }} \
             --shards ${{ strategy.job-total }} \
