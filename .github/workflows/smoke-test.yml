@@ -81,6 +81,20 @@ jobs:
         continue-on-error: true
         run: python -m sebi_pmr -v probe-export --period "$PERIOD" --save probe
 
+      # The export ignores pmrId and returns identical bytes for every manager,
+      # so it is almost certainly month-wide. This says what is actually in it.
+      - name: Inspect the month-wide export
+        if: ${{ env.PROBE != 'false' }}
+        continue-on-error: true
+        run: |
+          python -m sebi_pmr inspect-export --period "$PERIOD" --format xml \
+            --file probe/export_post_whole-month_xml_$(echo "$PERIOD" | tr -d '-').bin
+          echo
+          echo "################ legacy .xls variant ################"
+          pip install --quiet xlrd || true
+          python -m sebi_pmr inspect-export --format excel \
+            --file probe/export_post_whole-month_excel_$(echo "$PERIOD" | tr -d '-').bin
+
       - name: Build a workbook from the sample
         run: python -m sebi_pmr excel -o output/smoke.xlsx --csv-dir output/csv
 

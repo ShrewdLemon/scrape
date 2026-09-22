@@ -207,6 +207,37 @@ def cmd_probe_export(a) -> int:
     return 0
 
 
+def cmd_inspect_export(a) -> int:
+    """Report what the month-wide export actually contains.
+
+    The export ignores ``pmrId``, so it is very likely one document per month
+    covering every manager. This says whether the fields behind tables B, C,
+    G and H are in there, which decides whether the ~44,000-request HTML sweep
+    can be replaced by ~68 export downloads.
+    """
+    from .inspect import summarise
+
+    if a.file:
+        with open(a.file, "rb") as fh:
+            body = fh.read()
+        print(f"inspecting {a.file}\n")
+        print(summarise(body, a.format))
+        return 0
+
+    client = _client(a)
+    year, month = parse_period(a.period)
+    body, ctype, status = client.export_bytes(None, year, month,
+                                              fmt=a.format, method="post")
+    print(f"fetched {year}-{month:02d} export: HTTP {status}, {len(body):,} bytes, {ctype}\n")
+    if a.save:
+        os.makedirs(os.path.dirname(os.path.abspath(a.save)), exist_ok=True)
+        with open(a.save, "wb") as fh:
+            fh.write(body)
+        print(f"saved -> {a.save}\n")
+    print(summarise(body, a.format))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="sebi-pmr",
@@ -254,6 +285,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("inputs", nargs="+", help="shard db paths or globs")
     sp.add_argument("-o", "--out", default="data/pmr.db")
     sp.set_defaults(func=cmd_merge)
+
+    sp = sub.add_parser("inspect-export", parents=[net],
+                        help="report what the month-wide export contains")
+    sp.add_argument("--period", default="2024-03")
+    sp.add_argument("--format", choices=("xml", "excel"), default="xml")
+    sp.add_argument("--file", help="inspect a saved payload instead of fetching")
+    sp.add_argument("--save", help="write the fetched payload to this path")
+    sp.set_defaults(func=cmd_inspect_export)
 
     sp = sub.add_parser("status", help="coverage summary")
     sp.set_defaults(func=cmd_status)

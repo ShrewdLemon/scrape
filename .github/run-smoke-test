@@ -7,6 +7,6 @@
 #
 # Bump the counter (or just edit anything here) to run it again.
 
-run: 1
+run: 2
 requested: 2026-09-22
-reason: first live validation of the fetch path and the export fast path
+reason: inspect the month-wide export payload structure
