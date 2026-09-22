@@ -168,21 +168,22 @@ class PmrClient:
         return self._request("POST", LANDING, data=payload, headers=headers).text
 
     def export_bytes(self, pm: PortfolioManager | None, year: int, month: int,
-                     fmt: str = "xml", method: str = "post") -> tuple[bytes, str]:
-        """Raw bytes from the portal's Excel/XML export, plus its content-type.
+                     fmt: str = "xml", method: str = "post") -> tuple[bytes, str, int]:
+        """Raw bytes from the portal's Excel/XML export, its content-type and status.
 
         The page's own ``getPMRExcel``/``getPMRXml`` validators check only year
         and month, so ``pm=None`` probes whether the export will return a whole
-        month in one call.  Unverified against the live portal - see
-        ``pmr probe-export``.
+        month in one call.  Unlike the report fetch this does not retry on an
+        error status - a probe wants to see the failure, not paper over it.
         """
         if not self._warm:
             self.warm()
         payload = {"pmrId": pm.pmr_id if pm else "", "year": str(year),
                    "month": str(month), "currdate": "", "format": fmt}
         headers = {"Referer": LANDING}
+        self.limiter.wait()
         if method.lower() == "get":
-            resp = self._request("GET", EXPORT, params=payload, headers=headers)
+            resp = self.session.get(EXPORT, params=payload, headers=headers, timeout=self.timeout)
         else:
-            resp = self._request("POST", EXPORT, data=payload, headers=headers)
-        return resp.content, resp.headers.get("Content-Type", "")
+            resp = self.session.post(EXPORT, data=payload, headers=headers, timeout=self.timeout)
+        return resp.content, resp.headers.get("Content-Type", ""), resp.status_code

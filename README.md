@@ -203,9 +203,11 @@ by default. Check it yourself in one command:
 python -m sebi_pmr probe-export --period 2024-03 --save /tmp/probe
 ```
 
-It reports the size and content type of both the whole-month and single-manager
-variants. If the whole-month payload comes back large and well-formed, that is
-worth building on before committing to a 37-hour scrape.
+It walks the whole matrix — {GET, POST} x {with manager id, without} x
+{xml, excel} — sniffs what each response actually is (real XLSX, XML, an empty
+body, or the portal simply re-rendering its form), saves the payloads, and
+prints a verdict. If the whole-month variant returns a real file, that is worth
+building on before committing to a 37-hour scrape.
 
 ## Layout
 
