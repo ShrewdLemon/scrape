@@ -105,7 +105,8 @@ def summarise_xls(body: bytes) -> str:
         # non-empty header cells gives the real column name.
         header_rows = min(sh.nrows, 6)
         out.append(f"  --- column map (stacked from the first {header_rows} rows) ---")
-        for c in range(sh.ncols):
+        lo, hi = 0, sh.ncols
+        for c in range(lo, hi):
             parts = []
             for r in range(header_rows):
                 try:
@@ -120,10 +121,8 @@ def summarise_xls(body: bytes) -> str:
         for r in range(sh.nrows):
             row = [str(sh.cell_value(r, c)).strip() for c in range(sh.ncols)]
             if any(REG_RE.fullmatch(v.encode()) for v in row if v):
-                out.append(f"\n  --- first data row (row {r}) ---")
-                for c, v in enumerate(row):
-                    if v:
-                        out.append(f"   col {c:>3} = {v[:40]}")
+                out.append(f"\n  --- first data row (row {r}), as one line ---")
+                out.append("   " + ",".join(v[:18] for v in row))
                 break
     return "\n".join(out)
 

@@ -105,7 +105,14 @@ jobs:
           echo
           echo "################ consolidated .xls variant ################"
           if [ -n "$XLSF" ]; then
-            python -m sebi_pmr inspect-export --format excel --file "$XLSF"
+            # Only the column map matters here, and the first ~82 columns are
+            # the ones not yet seen, so keep the output tight.
+            python -m sebi_pmr inspect-export --format excel --file "$XLSF" \
+              > xls_map.txt 2>&1 || true
+            echo "--- columns 0-95 ---"
+            sed -n '/column map/,$p' xls_map.txt | sed -n '1,100p'
+            echo "--- first data row ---"
+            grep -A2 'first data row' xls_map.txt | cut -c1-900
           fi
 
       - name: Build a workbook from the sample
