@@ -48,13 +48,17 @@ jobs:
 
       - name: Fetch a few manager-months
         run: |
-          ARGS=""
-          [ -n "${{ inputs.only }}" ] && ARGS="--only '${{ inputs.only }}'"
-          eval python -m sebi_pmr -v scrape \
-            --since ${{ inputs.since }} \
-            --until ${{ inputs.since }} \
-            --limit ${{ inputs.limit }} \
-            $ARGS
+          # Branching rather than building an argument string and eval-ing it:
+          # a manager name contains spaces, and eval would re-split it.
+          if [ -n "${{ inputs.only }}" ]; then
+            python -m sebi_pmr -v scrape \
+              --since ${{ inputs.since }} --until ${{ inputs.since }} \
+              --limit ${{ inputs.limit }} --only "${{ inputs.only }}"
+          else
+            python -m sebi_pmr -v scrape \
+              --since ${{ inputs.since }} --until ${{ inputs.since }} \
+              --limit ${{ inputs.limit }}
+          fi
 
       - name: Coverage
         run: python -m sebi_pmr status
