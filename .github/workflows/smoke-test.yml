@@ -79,21 +79,34 @@ jobs:
       - name: Probe the export fast path
         if: ${{ env.PROBE != 'false' }}
         continue-on-error: true
-        run: python -m sebi_pmr -v probe-export --period "$PERIOD" --save probe
+        # Generating the export server-side can take well over a minute on a
+        # cold request, so this needs a much longer timeout than a page fetch.
+        run: python -m sebi_pmr -v probe-export --period "$PERIOD" --save probe --timeout 240
 
       # The export ignores pmrId and returns identical bytes for every manager,
       # so it is almost certainly month-wide. This says what is actually in it.
       - name: Inspect the month-wide export
         if: ${{ env.PROBE != 'false' }}
         continue-on-error: true
+        # Pick whichever payload actually landed: any single export request can
+        # time out, and every variant returns the same bytes anyway.
         run: |
-          python -m sebi_pmr inspect-export --period "$PERIOD" --format xml \
-            --file probe/export_post_whole-month_xml_$(echo "$PERIOD" | tr -d '-').bin
+          XMLF=$(ls -S probe/*_xml_*.bin 2>/dev/null | head -1)
+          XLSF=$(ls -S probe/*_excel_*.bin 2>/dev/null | head -1)
+          echo "xml payload: ${XMLF:-none}   xls payload: ${XLSF:-none}"
+          if [ -n "$XMLF" ]; then
+            python -m sebi_pmr inspect-export --format xml --file "$XMLF"
+          else
+            echo "no XML payload saved; fetching one directly"
+            python -m sebi_pmr inspect-export --period "$PERIOD" --format xml \
+              --timeout 240 --save probe/direct_xml.bin
+          fi
           echo
           echo "################ legacy .xls variant ################"
           pip install --quiet xlrd || true
-          python -m sebi_pmr inspect-export --format excel \
-            --file probe/export_post_whole-month_excel_$(echo "$PERIOD" | tr -d '-').bin
+          if [ -n "$XLSF" ]; then
+            python -m sebi_pmr inspect-export --format excel --file "$XLSF"
+          fi
 
       - name: Build a workbook from the sample
         run: python -m sebi_pmr excel -o output/smoke.xlsx --csv-dir output/csv
