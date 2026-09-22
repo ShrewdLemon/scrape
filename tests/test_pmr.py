@@ -39,7 +39,11 @@ def period_of(name: str) -> tuple[int, int]:
 
 
 NEW_FORMAT = ["360one_2021_02", "360one_2021_03", "360one_2021_04",
-              "360one_2024_03", "zen_2023_06"]
+              "360one_2024_03", "zen_2023_06",
+              # Six more managers of very different size and structure, so a
+              # layout quirk specific to one filer cannot pass unnoticed.
+              "motilal_2024_06", "marcellus_2024_06", "icici_2024_06",
+              "marcellus_2024_05", "marcellus_2024_04", "abakkus_2024_06"]
 LEGACY = ["360one_2018_04", "360one_2020_04", "360one_2020_10",
           "360one_2020_12", "360one_2021_01"]
 
@@ -165,6 +169,27 @@ def test_table_c_total_reconciles_against_its_approach_rows():
     assert abs(got - total["net_inflow_outflow_during_month_inr_cr"]) < 0.05
 
 
+@pytest.mark.parametrize("name,expected_total", [
+    ("marcellus_2024_06", 6915.08),
+    ("icici_2024_06", 18601.12),
+    ("360one_2024_03", 18882.88),
+])
+def test_published_aum_totals_are_reproduced_exactly(name, expected_total):
+    """Spot-check against the figure printed on the page itself."""
+    rep = parse_report(fixture(name), *period_of(name))
+    total = [r for r in rep.b_aum if r["is_total"]][0]
+    assert total["Total"] == pytest.approx(expected_total, abs=0.01)
+
+
+def test_consecutive_months_of_one_manager_differ():
+    """Guards against a cached or ignored month parameter returning one page."""
+    totals = {}
+    for name in ("marcellus_2024_04", "marcellus_2024_05", "marcellus_2024_06"):
+        rep = parse_report(fixture(name), *period_of(name))
+        totals[name] = [r for r in rep.b_aum if r["is_total"]][0]["Total"]
+    assert len(set(totals.values())) == 3, totals
+
+
 def test_manager_rename_is_visible_in_the_fixtures():
     """Same registration number, different published name - the Excel keys on the number."""
     old = parse_report(fixture("360one_2021_02"), 2021, 2)
@@ -214,17 +239,30 @@ def test_default_delay_window_is_the_requested_budget():
 # --------------------------------------------------------------------- store
 @pytest.fixture()
 def seeded(tmp_path):
+    """A store populated from every fixture, as a real run would leave it.
+
+    Managers are derived from the pages themselves rather than hard-coded, so
+    adding a fixture needs no bookkeeping here.
+    """
     store = Store(str(tmp_path / "pmr.db"), str(tmp_path / "raw"))
-    pms = {
-        "360one": PortfolioManager("a@@a@@360 ONE", "INP000004565", "360 ONE ASSET MANAGEMENT LIMITED"),
-        "zen": PortfolioManager("b@@b@@ZEN", "INP000000936", "ZEN WEALTH MANAGEMENT SERVICES LIMITED"),
-    }
-    store.upsert_pms(list(pms.values()))
+    managers: dict[str, PortfolioManager] = {}
+    pages = []
     for path in sorted(glob.glob(os.path.join(FIX, "*.gz"))):
         name = os.path.basename(path).replace(".html.gz", "")
-        pm = pms[name.split("_")[0]]
+        key = name.rsplit("_", 2)[0]
         year, month = period_of(name)
         html = fixture(name)
+        try:
+            rep = parse_report(html, year, month)
+            reg, display = rep.pm_reg, rep.pm_name
+        except FormatError:
+            reg, display = key.upper(), key.upper()
+        if key not in managers:
+            managers[key] = PortfolioManager(f"{reg}@@{reg}@@{display}", reg, display)
+        pages.append((managers[key], year, month, html))
+
+    store.upsert_pms(list(managers.values()))
+    for pm, year, month, html in pages:
         arc, sha = store.write_archive(pm.reg_no, year, month, html)
         status, rep, detail = classify(html, year, month)
         n = store.save_report(pm.pmr_id, rep) if rep else 0
@@ -257,6 +295,7 @@ def test_strip_dropdown_keeps_the_rest_of_the_page():
 
 
 def test_merge_unions_shard_databases(tmp_path, seeded):
+    before = seeded.coverage()["managers"]
     other = Store(str(tmp_path / "shard1.db"), str(tmp_path / "raw"))
     other.upsert_pms([PortfolioManager("c@@c@@OTHER", "INP999", "OTHER PM")])
     other.log_page("c@@c@@OTHER", 2024, 4, "ok", n_rows=1)
@@ -265,7 +304,7 @@ def test_merge_unions_shard_databases(tmp_path, seeded):
     merge([seeded.path, str(tmp_path / "shard1.db")], str(tmp_path / "merged.db"),
           str(tmp_path / "raw"))
     merged = Store(str(tmp_path / "merged.db"), str(tmp_path / "raw"))
-    assert merged.coverage()["managers"] == 3
+    assert merged.coverage()["managers"] == before + 1
     assert ("c@@c@@OTHER", 2024, 4) in merged.done_cells()
 
 
