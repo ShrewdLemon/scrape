@@ -350,3 +350,24 @@ def test_manager_dropdown_parses_into_id_and_name():
     pms = PmrClient().portfolio_managers(html)
     assert len(pms) == 1
     assert pms[0].reg_no == "INP1" and pms[0].name == "ALPHA LLP"
+
+
+# -------------------------------------------------------------- export probe
+@pytest.mark.parametrize("body,expected", [
+    (b"", "EMPTY"),
+    (b"\xef\xbb\xbf", "EMPTY"),
+    (b"PK\x03\x04...", "XLSX"),
+    (b"\xef\xbb\xbf<?xml version='1.0'?><pmr/>", "XML"),
+    (b"<!DOCTYPE html><html><body>form</body></html>", "did not fire"),
+    (bytes.fromhex("d0cf11e0a1b11ae1") + b"rest", "legacy XLS"),
+])
+def test_export_sniffer_names_what_came_back(body, expected):
+    """A BOM-only body must read as empty, not as a successful export."""
+    from sebi_pmr.cli import _sniff
+    assert expected in _sniff(body)
+
+
+def test_probe_export_defaults_to_trying_both_methods():
+    from sebi_pmr.cli import build_parser
+    assert build_parser().parse_args(["probe-export"]).method == "both"
+    assert build_parser().parse_args(["scrape"]).method == "post"

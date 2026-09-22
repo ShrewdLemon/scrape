@@ -119,36 +119,90 @@ def cmd_status(a) -> int:
     return 0
 
 
+def _sniff(body: bytes) -> str:
+    """Name what the export actually returned, from its first bytes."""
+    if not body:
+        return "EMPTY (zero bytes)"
+    head = body.lstrip(b"\xef\xbb\xbf")          # tolerate a UTF-8 BOM
+    if not head:
+        return "EMPTY (byte-order mark only)"
+    if head[:2] == b"PK":
+        return "XLSX/ZIP archive"
+    if head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return "legacy XLS (OLE2)"
+    low = head[:400].lower()
+    if low.startswith(b"<?xml") or low.startswith(b"<workbook") or low.startswith(b"<pmr"):
+        return "XML document"
+    if b"<html" in low or b"<!doctype html" in low:
+        return "HTML page (the export did not fire - portal re-rendered the form)"
+    if head[:4] == b"%PDF":
+        return "PDF"
+    return "unrecognised binary/text"
+
+
 def cmd_probe_export(a) -> int:
     """Check whether the portal's Excel/XML export can replace page scraping.
 
     The portal's own ``getPMRExcel``/``getPMRXml`` validate only year and
     month, so an export without a manager id *might* return a whole month at
-    once - which would turn ~44 000 requests into ~68.  This probes it.
+    once - which would turn ~44,000 requests into ~68.  This walks the full
+    matrix of {GET, POST} x {with manager, without} x {xml, excel} and says
+    what each one returned, because the interesting answer is which
+    combination, if any, yields a real file.
     """
     store, client = Store(a.db, a.archive_dir), _client(a)
     pms = store.pms()
     from .fetch import PortfolioManager
-    one = PortfolioManager(pms[0]["pmr_id"], pms[0]["reg_no"], pms[0]["name"]) if pms else None
-    y, m = parse_period(a.period)
-    for label, pm in (("whole-month (no pmrId)", None), ("single manager", one)):
-        if label == "single manager" and one is None:
-            continue
-        for fmt in ("xml", "excel"):
-            try:
-                body, ctype = client.export_bytes(pm, y, m, fmt=fmt, method=a.method)
-            except Exception as exc:
-                print(f"{label:<24} {fmt:<6} FAILED {type(exc).__name__}: {exc}")
-                continue
-            head = body[:120].replace(b"\n", b" ")
-            print(f"{label:<24} {fmt:<6} {len(body):>10,} bytes  {ctype}\n"
-                  f"{'':24} head={head!r}")
-            if a.save and body:
-                path = f"{a.save}/export_{label.split()[0]}_{fmt}_{y}{m:02d}.bin".replace(" ", "")
-                import os
-                os.makedirs(a.save, exist_ok=True)
-                open(path, "wb").write(body)
-                print(f"{'':24} saved -> {path}")
+    one = (PortfolioManager(pms[0]["pmr_id"], pms[0]["reg_no"], pms[0]["name"])
+           if pms else None)
+    if one is None:
+        print("catalogue is empty - run `catalog` first so a manager id is available",
+              file=sys.stderr)
+        return 2
+    year, month = parse_period(a.period)
+    methods = ("post", "get") if a.method == "both" else (a.method,)
+
+    print(f"probing the export for {year}-{month:02d}  "
+          f"(manager: {one.name})\n")
+    header = f"{'method':<7}{'scope':<16}{'fmt':<7}{'status':<8}{'bytes':>12}  what came back"
+    print(header)
+    print("-" * len(header))
+
+    whole_month_win = None
+    for method in methods:
+        for scope, pm in (("whole-month", None), ("single-manager", one)):
+            for fmt in ("xml", "excel"):
+                try:
+                    body, ctype, status = client.export_bytes(pm, year, month,
+                                                              fmt=fmt, method=method)
+                except Exception as exc:
+                    print(f"{method:<7}{scope:<16}{fmt:<7}{'-':<8}{'-':>12}  "
+                          f"FAILED {type(exc).__name__}: {exc}")
+                    continue
+                kind = _sniff(body)
+                print(f"{method:<7}{scope:<16}{fmt:<7}{status:<8}{len(body):>12,}  {kind}")
+                if ctype:
+                    print(f"{'':30}content-type: {ctype}")
+                if a.save and body:
+                    os.makedirs(a.save, exist_ok=True)
+                    path = os.path.join(
+                        a.save, f"export_{method}_{scope}_{fmt}_{year}{month:02d}.bin")
+                    with open(path, "wb") as fh:
+                        fh.write(body)
+                    print(f"{'':30}saved -> {path}")
+                usable = len(body) > 2048 and "EMPTY" not in kind and "did not fire" not in kind
+                if usable and scope == "whole-month" and whole_month_win is None:
+                    whole_month_win = (method, fmt, len(body))
+
+    print()
+    if whole_month_win:
+        method, fmt, size = whole_month_win
+        print(f"VERDICT: the whole-month export WORKS ({method.upper()}, format={fmt}, "
+              f"{size:,} bytes).")
+        print("         If that payload really covers every manager, the job drops from")
+        print("         ~44,000 requests to ~68. Inspect the saved file before relying on it.")
+    else:
+        print("VERDICT: no whole-month export. Keep the per-page HTML path (the default).")
     store.close()
     return 0
 
@@ -168,7 +222,6 @@ def build_parser() -> argparse.ArgumentParser:
                      help="ceiling of the per-request delay window (default 4.0s)")
     net.add_argument("--timeout", type=float, default=60.0)
     net.add_argument("--retries", type=int, default=4)
-    net.add_argument("--method", choices=("post", "get"), default="post")
 
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -185,6 +238,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--only", help="restrict to managers matching this substring")
     sp.add_argument("--no-archive", action="store_true", help="do not keep raw HTML")
     sp.add_argument("--redo-errors", action="store_true", help="retry cells that previously errored")
+    sp.add_argument("--method", choices=("post", "get"), default="post",
+                    help="how to submit the report form (the site itself POSTs)")
     sp.set_defaults(func=cmd_scrape)
 
     sp = sub.add_parser("reparse", help="rebuild rows from the archive (no network)")
@@ -207,6 +262,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="test the portal's Excel/XML export fast path")
     sp.add_argument("--period", default="2024-03")
     sp.add_argument("--save", help="directory to save returned payloads into")
+    sp.add_argument("--method", choices=("post", "get", "both"), default="both",
+                    help="which HTTP methods to try (default: both)")
     sp.set_defaults(func=cmd_probe_export)
     return p
 
