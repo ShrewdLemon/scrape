@@ -3,21 +3,27 @@ name: smoke-test
 # A handful of live requests against the portal - run this BEFORE committing to
 # a 37-hour backfill. It answers two questions cheaply:
 #
-#   1. Can a GitHub runner reach the portal, and does the POST form path work
-#      end to end (session, catalogue, report page, parser, Excel)?
+#   1. Can a runner reach the portal, and does the POST form path work end to
+#      end (session, catalogue, report page, parser, Excel)?
 #   2. Does the portal's own Excel/XML export return a usable payload - and in
 #      particular, does it return a WHOLE MONTH when no manager id is sent?
 #      If it does, the job collapses from ~44,000 requests to ~68.
 #
-# Default cost: about a dozen requests.
+# Default cost: about twenty requests.
 
 on:
+  # Dispatch needs `actions: write`, which some tokens do not carry. Touching
+  # the sentinel file runs the same job from an ordinary push, and the narrow
+  # `paths` filter keeps it from firing on normal commits.
+  push:
+    paths:
+      - ".github/run-smoke-test"
   workflow_dispatch:
     inputs:
       limit:
         description: "How many manager-months to fetch"
         default: "6"
-      since:
+      period:
         description: "Period to sample, YYYY-MM"
         default: "2024-03"
       only:
@@ -25,11 +31,18 @@ on:
         default: "360 ONE ASSET"
       probe_export:
         description: "Also probe the Excel/XML export fast path"
-        type: boolean
-        default: true
+        default: "true"
 
 permissions:
   contents: read
+
+# Push events carry no inputs, so every value falls back to its default here
+# rather than expanding to an empty string in the middle of a command line.
+env:
+  LIMIT: ${{ inputs.limit || '6' }}
+  PERIOD: ${{ inputs.period || '2024-03' }}
+  ONLY: ${{ inputs.only || '360 ONE ASSET' }}
+  PROBE: ${{ inputs.probe_export || 'true' }}
 
 jobs:
   smoke:
@@ -50,14 +63,12 @@ jobs:
         run: |
           # Branching rather than building an argument string and eval-ing it:
           # a manager name contains spaces, and eval would re-split it.
-          if [ -n "${{ inputs.only }}" ]; then
+          if [ -n "$ONLY" ]; then
             python -m sebi_pmr -v scrape \
-              --since ${{ inputs.since }} --until ${{ inputs.since }} \
-              --limit ${{ inputs.limit }} --only "${{ inputs.only }}"
+              --since "$PERIOD" --until "$PERIOD" --limit "$LIMIT" --only "$ONLY"
           else
             python -m sebi_pmr -v scrape \
-              --since ${{ inputs.since }} --until ${{ inputs.since }} \
-              --limit ${{ inputs.limit }}
+              --since "$PERIOD" --until "$PERIOD" --limit "$LIMIT"
           fi
 
       - name: Coverage
@@ -66,23 +77,22 @@ jobs:
       # The export validators check only year and month, never the manager id,
       # so the no-pmrId variant may return an entire month in one response.
       - name: Probe the export fast path
-        if: ${{ inputs.probe_export }}
+        if: ${{ env.PROBE != 'false' }}
         continue-on-error: true
-        run: |
-          python -m sebi_pmr -v probe-export \
-            --period ${{ inputs.since }} --save probe
+        run: python -m sebi_pmr -v probe-export --period "$PERIOD" --save probe
 
       - name: Build a workbook from the sample
         run: python -m sebi_pmr excel -o output/smoke.xlsx --csv-dir output/csv
 
       - name: Show what landed
         run: |
-          echo "--- B_Disc_AUM (first 5 rows) ---"
-          head -5 output/csv/B_Disc_AUM.csv || true
-          echo "--- C_Disc_NetFlow (first 5 rows) ---"
-          head -5 output/csv/C_Disc_NetFlow.csv || true
-          echo "--- H_NonDisc_Flow (first 5 rows) ---"
-          head -5 output/csv/H_NonDisc_Flow.csv || true
+          for f in B_Disc_AUM C_Disc_NetFlow G_NonDisc_AUM H_NonDisc_Flow; do
+            echo "=== $f (first 4 rows) ==="
+            head -4 "output/csv/$f.csv" || true
+            echo
+          done
+          echo "=== saved export payloads ==="
+          ls -la probe/ 2>/dev/null || echo "(none)"
 
       - uses: actions/upload-artifact@v4
         if: always()
