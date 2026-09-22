@@ -1,0 +1,12 @@
+# Touch this file and push to run the smoke-test workflow.
+#
+# The workflow also accepts workflow_dispatch, but dispatching needs the
+# `actions: write` permission, which not every token carries. Changing this
+# file triggers the same job from an ordinary push; the workflow's `paths`
+# filter means normal commits never fire it.
+#
+# Bump the counter (or just edit anything here) to run it again.
+
+run: 1
+requested: 2026-09-22
+reason: first live validation of the fetch path and the export fast path
