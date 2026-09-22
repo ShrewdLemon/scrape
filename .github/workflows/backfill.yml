@@ -1,0 +1,145 @@
+name: backfill
+
+# Historical sweep of the SEBI PMR archive.
+#
+# Scale: ~651 portfolio managers x ~68 published months is roughly 44,000
+# requests. At the polite 2.5-4.0s spacing that is about 37 hours of wall
+# clock, so this CANNOT finish in one job (GitHub caps a job at 6 hours).
+# The design instead makes progress durable:
+#
+#   * each shard keeps its OWN SQLite file, so parallel shards never contend;
+#   * shard state is cached between runs, so re-running resumes where it left off;
+#   * every run takes a wall-clock budget and stops cleanly when it expires.
+#
+# Re-run this workflow until `status` reports full coverage. Note that each
+# extra shard multiplies the aggregate request rate against sebi.gov.in:
+# 4 shards at 2.5-4.0s is effectively one request every ~0.8s. Keep the shard
+# count modest, and prefer a long local run for the initial backfill.
+
+on:
+  workflow_dispatch:
+    inputs:
+      shards:
+        description: "Parallel shards (each multiplies the request rate)"
+        default: "4"
+      since:
+        description: "First period YYYY-MM (blank = 2021-02, the format change)"
+        default: "2021-02"
+      until:
+        description: "Last period YYYY-MM (blank = last completed month)"
+        default: ""
+      max_seconds:
+        description: "Wall-clock budget per shard, seconds"
+        default: "18000"
+      min_delay:
+        description: "Minimum delay between requests, seconds"
+        default: "2.5"
+      max_delay:
+        description: "Maximum delay between requests, seconds"
+        default: "4.0"
+      keep_archive:
+        description: "Cache raw HTML too (bigger cache, free re-parsing)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build.outputs.matrix }}
+    steps:
+      - id: build
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, os
+          n = max(1, min(int("${{ inputs.shards }}" or 1), 12))
+          print("matrix=" + json.dumps({"shard": list(range(n))}))
+          PY
+
+  scrape:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      # Restore this shard's progress from the previous run of the workflow.
+      - name: Restore shard state
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/shard-${{ matrix.shard }}.db
+            data/shard-${{ matrix.shard }}.db-wal
+            data/raw
+          key: pmr-shard-${{ matrix.shard }}-${{ github.run_id }}
+          restore-keys: |
+            pmr-shard-${{ matrix.shard }}-
+
+      - name: Scrape shard ${{ matrix.shard }}
+        run: |
+          ARGS=""
+          [ -n "${{ inputs.since }}" ] && ARGS="$ARGS --since ${{ inputs.since }}"
+          [ -n "${{ inputs.until }}" ] && ARGS="$ARGS --until ${{ inputs.until }}"
+          [ "${{ inputs.keep_archive }}" != "true" ] && ARGS="$ARGS --no-archive"
+          python -m sebi_pmr --db data/shard-${{ matrix.shard }}.db scrape \
+            --shard ${{ matrix.shard }} \
+            --shards ${{ strategy.job-total }} \
+            --min-delay ${{ inputs.min_delay }} \
+            --max-delay ${{ inputs.max_delay }} \
+            --max-seconds ${{ inputs.max_seconds }} \
+            $ARGS
+
+      - name: Coverage so far
+        if: always()
+        run: python -m sebi_pmr --db data/shard-${{ matrix.shard }}.db status
+
+      - name: Publish shard database
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: data/shard-${{ matrix.shard }}.db
+          retention-days: 30
+          if-no-files-found: warn
+
+  workbook:
+    needs: scrape
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: shard-*
+          path: shards
+          merge-multiple: true
+      - name: Merge shards and build the workbook
+        run: |
+          python -m sebi_pmr merge 'shards/*.db' -o data/pmr.db
+          python -m sebi_pmr --db data/pmr.db status
+          python -m sebi_pmr --db data/pmr.db excel -o output/sebi_pmr.xlsx --csv-dir output/csv
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sebi-pmr-workbook
+          path: |
+            output/sebi_pmr.xlsx
+            output/csv
+            data/pmr.db
+          retention-days: 90
