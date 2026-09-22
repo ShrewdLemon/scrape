@@ -1,0 +1,91 @@
+name: smoke-test
+
+# A handful of live requests against the portal - run this BEFORE committing to
+# a 37-hour backfill. It answers two questions cheaply:
+#
+#   1. Can a GitHub runner reach the portal, and does the POST form path work
+#      end to end (session, catalogue, report page, parser, Excel)?
+#   2. Does the portal's own Excel/XML export return a usable payload - and in
+#      particular, does it return a WHOLE MONTH when no manager id is sent?
+#      If it does, the job collapses from ~44,000 requests to ~68.
+#
+# Default cost: about a dozen requests.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "How many manager-months to fetch"
+        default: "6"
+      since:
+        description: "Period to sample, YYYY-MM"
+        default: "2024-03"
+      only:
+        description: "Restrict to managers matching this substring (blank = all)"
+        default: "360 ONE ASSET"
+      probe_export:
+        description: "Also probe the Excel/XML export fast path"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Catalogue the portfolio managers
+        run: python -m sebi_pmr -v catalog
+
+      - name: Fetch a few manager-months
+        run: |
+          ARGS=""
+          [ -n "${{ inputs.only }}" ] && ARGS="--only '${{ inputs.only }}'"
+          eval python -m sebi_pmr -v scrape \
+            --since ${{ inputs.since }} \
+            --until ${{ inputs.since }} \
+            --limit ${{ inputs.limit }} \
+            $ARGS
+
+      - name: Coverage
+        run: python -m sebi_pmr status
+
+      # The export validators check only year and month, never the manager id,
+      # so the no-pmrId variant may return an entire month in one response.
+      - name: Probe the export fast path
+        if: ${{ inputs.probe_export }}
+        continue-on-error: true
+        run: |
+          python -m sebi_pmr -v probe-export \
+            --period ${{ inputs.since }} --save probe
+
+      - name: Build a workbook from the sample
+        run: python -m sebi_pmr excel -o output/smoke.xlsx --csv-dir output/csv
+
+      - name: Show what landed
+        run: |
+          echo "--- B_Disc_AUM (first 5 rows) ---"
+          head -5 output/csv/B_Disc_AUM.csv || true
+          echo "--- C_Disc_NetFlow (first 5 rows) ---"
+          head -5 output/csv/C_Disc_NetFlow.csv || true
+          echo "--- H_NonDisc_Flow (first 5 rows) ---"
+          head -5 output/csv/H_NonDisc_Flow.csv || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-output
+          path: |
+            output/
+            probe/
+          retention-days: 14
+          if-no-files-found: warn
