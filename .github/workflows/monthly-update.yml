@@ -1,0 +1,98 @@
+name: monthly-update
+
+# Incremental catch-up, and the workflow this project is really meant to run.
+#
+# One month across every portfolio manager is ~651 requests, which at 2.5-4.0s
+# is roughly 35 minutes - comfortably inside a normal CI job, unlike the
+# historical backfill. SEBI usually publishes a month's reports during the
+# following month, so this runs twice (mid-month and late-month) to pick up
+# late filers, and re-checks a trailing window because managers do file late.
+
+on:
+  schedule:
+    - cron: "17 2 15 * *"   # 15th, 02:17 UTC
+    - cron: "17 2 25 * *"   # 25th, 02:17 UTC
+  workflow_dispatch:
+    inputs:
+      lookback_months:
+        description: "How many recent months to re-check for late filings"
+        default: "3"
+      min_delay:
+        default: "2.5"
+      max_delay:
+        default: "4.0"
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      - name: Restore accumulated state
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/pmr.db
+            data/pmr.db-wal
+          key: pmr-main-${{ github.run_id }}
+          restore-keys: |
+            pmr-main-
+
+      # New managers register constantly, so refresh the dropdown every run.
+      - name: Refresh the portfolio-manager catalogue
+        run: python -m sebi_pmr catalog
+
+      - name: Work out the window to refresh
+        id: window
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          from datetime import date
+          import os
+          look = int(os.environ.get("LOOKBACK") or 3)
+          t = date.today()
+          y, m = (t.year - 1, 12) if t.month == 1 else (t.year, t.month - 1)
+          for _ in range(look - 1):
+              m -= 1
+              if m == 0:
+                  y, m = y - 1, 12
+          print(f"since={y:04d}-{m:02d}")
+          PY
+        env:
+          LOOKBACK: ${{ inputs.lookback_months }}
+
+      # Re-check the trailing window: late filings appear on pages that were
+      # empty when first fetched, so those cells are retried rather than trusted.
+      - name: Scrape recent months
+        run: |
+          python -m sebi_pmr scrape \
+            --since ${{ steps.window.outputs.since }} \
+            --min-delay ${{ inputs.min_delay || '2.5' }} \
+            --max-delay ${{ inputs.max_delay || '4.0' }} \
+            --max-seconds 17000 \
+            --redo-errors
+
+      - name: Coverage
+        if: always()
+        run: python -m sebi_pmr status
+
+      - name: Build the workbook
+        if: always()
+        run: python -m sebi_pmr excel -o output/sebi_pmr.xlsx --csv-dir output/csv
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sebi-pmr-workbook
+          path: |
+            output/sebi_pmr.xlsx
+            output/csv
+          retention-days: 90
