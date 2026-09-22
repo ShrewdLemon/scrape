@@ -7,6 +7,6 @@
 #
 # Bump the counter (or just edit anything here) to run it again.
 
-run: 3
+run: 4
 requested: 2026-09-22
-reason: inspect export payload with a longer timeout
+reason: dump the full column map of the consolidated monthly report

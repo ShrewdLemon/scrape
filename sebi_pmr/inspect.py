@@ -98,11 +98,33 @@ def summarise_xls(body: bytes) -> str:
         out.append(f"xlrd could not open it: {type(exc).__name__}: {exc}")
         return "\n".join(out)
     out.append(f"sheets: {book.nsheets}")
-    for sh in book.sheets()[:5]:
-        out.append(f"  '{sh.name}': {sh.nrows} rows x {sh.ncols} cols")
-        for r in range(min(sh.nrows, 4)):
-            vals = [str(sh.cell_value(r, c))[:22] for c in range(min(sh.ncols, 10))]
-            out.append(f"     {vals}")
+    for sh in book.sheets():
+        out.append(f"\n  sheet '{sh.name}': {sh.nrows} rows x {sh.ncols} cols")
+
+        # The header is several merged rows deep; stacking each column's
+        # non-empty header cells gives the real column name.
+        header_rows = min(sh.nrows, 6)
+        out.append(f"  --- column map (stacked from the first {header_rows} rows) ---")
+        for c in range(sh.ncols):
+            parts = []
+            for r in range(header_rows):
+                try:
+                    v = str(sh.cell_value(r, c)).strip()
+                except IndexError:
+                    v = ""
+                if v and v not in parts:
+                    parts.append(v)
+            out.append(f"   col {c:>3}: {' | '.join(parts) if parts else '(blank)'}")
+
+        # The first row that carries a registration number is real data.
+        for r in range(sh.nrows):
+            row = [str(sh.cell_value(r, c)).strip() for c in range(sh.ncols)]
+            if any(REG_RE.fullmatch(v.encode()) for v in row if v):
+                out.append(f"\n  --- first data row (row {r}) ---")
+                for c, v in enumerate(row):
+                    if v:
+                        out.append(f"   col {c:>3} = {v[:40]}")
+                break
     return "\n".join(out)
 
 
