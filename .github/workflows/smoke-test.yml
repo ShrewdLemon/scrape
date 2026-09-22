@@ -91,6 +91,7 @@ jobs:
         # Pick whichever payload actually landed: any single export request can
         # time out, and every variant returns the same bytes anyway.
         run: |
+          pip install --quiet xlrd || true
           XMLF=$(ls -S probe/*_xml_*.bin 2>/dev/null | head -1)
           XLSF=$(ls -S probe/*_excel_*.bin 2>/dev/null | head -1)
           echo "xml payload: ${XMLF:-none}   xls payload: ${XLSF:-none}"
@@ -102,8 +103,7 @@ jobs:
               --timeout 240 --save probe/direct_xml.bin
           fi
           echo
-          echo "################ legacy .xls variant ################"
-          pip install --quiet xlrd || true
+          echo "################ consolidated .xls variant ################"
           if [ -n "$XLSF" ]; then
             python -m sebi_pmr inspect-export --format excel --file "$XLSF"
           fi
