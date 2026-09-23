@@ -262,6 +262,40 @@ def cmd_inspect_export(a) -> int:
     return 0
 
 
+def cmd_apmi(a) -> int:
+    """Add the IA Insights sheet (APMI strategy / service type / inception)."""
+    from openpyxl import load_workbook
+
+    from . import apmi
+
+    unique, regs_by_name, managers, reg_names = apmi.read_workbook_inputs(a.workbook)
+    logging.info("%d approach names on the Unique sheet", len(unique))
+    client = apmi.ApmiClient(timeout=a.timeout, delay=a.delay)
+    cache = apmi.load_apmi(client, a.cache, refresh=a.refresh)
+    universe = cache["universe"]
+    logging.info("APMI holds %d approaches (%d on its ranking pages)",
+                 len(universe), len(cache["rankings"]))
+    prov = apmi.provider_regs({x["pmsName"] for x in universe}, managers)
+    rows = apmi.match_all(unique, regs_by_name, reg_names, universe, prov,
+                          ranked=set(cache["rankings"]))
+    wanted = {m.apmi["id"] for m in rows if m.apmi}
+    details = apmi.fill_details(client, cache, wanted, a.cache)
+
+    wb = load_workbook(a.workbook)
+    apmi.write_sheet(wb, rows, details, cache["fetched_at"])
+    summary = apmi.summarise(rows, unique, details)
+    summary.spot = apmi.spot_check(client, details)
+    if "Notes" in wb.sheetnames:
+        apmi.append_rows(wb["Notes"], apmi.notes_rows(cache["fetched_at"]))
+    if "Verification" in wb.sheetnames:
+        apmi.append_rows(wb["Verification"], summary.verification_rows())
+    logging.info("saving %s", a.out)
+    wb.save(a.out)
+    print(summary.text())
+    print(f"wrote {a.out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="sebi-pmr",
@@ -337,6 +371,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--method", choices=("post", "get", "both"), default="both",
                     help="which HTTP methods to try (default: both)")
     sp.set_defaults(func=cmd_probe_export)
+
+    sp = sub.add_parser("apmi", help="add the IA Insights sheet from APMI's IA Insight Report")
+    sp.add_argument("workbook", help="workbook with Unique, B, C and Managers sheets")
+    sp.add_argument("-o", "--out", required=True, help="where to write the updated workbook")
+    sp.add_argument("--cache", default="data/apmi_cache.json",
+                    help="APMI responses kept between runs (default data/apmi_cache.json)")
+    sp.add_argument("--refresh", action="store_true", help="ignore the cache and refetch")
+    sp.add_argument("--delay", type=float, default=0.5, help="pause between APMI requests (s)")
+    sp.add_argument("--timeout", type=float, default=60.0)
+    sp.set_defaults(func=cmd_apmi)
     return p
 
 

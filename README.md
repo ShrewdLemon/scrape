@@ -116,6 +116,7 @@ python -m sebi_pmr scrape                     # 2021-02 .. last completed month
 | `excel` | Write the workbook and CSVs |
 | `status` | Coverage summary |
 | `probe-export` | Test whether the portal's own Excel/XML export can replace scraping |
+| `apmi` | Add the **IA Insights** sheet from APMI's IA Insight Report (see below) |
 
 Useful flags: `--min-delay/--max-delay` (default 2.5/4.0), `--only <name>` to
 target one manager, `--no-archive` to skip keeping raw HTML.
@@ -162,6 +163,35 @@ Two more things worth knowing when joining this data:
   the same registration number (`INP000004565`). Join on `Registration No`;
   the workbook shows the most recently published name.
 * **`Is Total Row`** marks SEBI's own Total line — filter it out before summing.
+
+## IA Insights sheet (APMI)
+
+```bash
+python -m sebi_pmr apmi workbook.xlsx -o workbook_with_ia_insights.xlsx
+```
+
+Adds an `IA Insights` sheet giving, for every name on the workbook's `Unique`
+sheet, the **Strategy** (Equity / Debt / Hybrid / Multi Asset),
+**Discretionary / Non-Discretionary** tag and **Date of Inception** from
+[APMI's IA Insight Report](https://insights.apmiindia.org), with a link to each
+approach's report page. It also adds a row to `Notes` and its checks to
+`Verification`.
+
+APMI's report pages are rendered from Next.js server actions, so no HTML is
+scraped: `searchAPMI("%")` returns every approach APMI holds (about 2,300,
+dormant ones included), the ranking pages' action gives the three fields for
+the ~1,350 approaches APMI ranks, and `fetchIaDetails` (the report page's own
+call) fills in the rest, only for approaches that matched. About 800 requests
+in all, roughly 20 minutes; responses are cached in `data/apmi_cache.json`, so a
+re-run takes seconds (`--refresh` refetches).
+
+Matching: a name must agree **and** the manager must agree (SEBI registration
+numbers from tables B/C, APMI manager names mapped onto them through the
+`Managers` sheet). The `Match` column says how each row matched: `Exact`,
+`Normalised` (generic words such as Approach / Strategy / PMS ignored), `Fuzzy`
+(typos only - flagged "check"), `name only` (non-discretionary names, which
+SEBI's tables do not tie to a manager) or `Not on APMI`. Details are in the
+docstring of `sebi_pmr/apmi.py`.
 
 ## Workflows
 
@@ -219,6 +249,7 @@ sebi_pmr/
   store.py     SQLite checkpointing, HTML archive, shard merge
   pipeline.py  work planning, sharding, budgets, graceful shutdown
   excel.py     workbook and CSV output
+  apmi.py      APMI IA Insights sheet (fetch, match, write)
 tests/         65 tests, all offline
   fixtures/    real captured pages, one per format era
 ```
