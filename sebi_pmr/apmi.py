@@ -32,7 +32,8 @@ agree, tried in three passes:
 ``Fuzzy``       same manager, names differ only by typos: each word the same
                 or >= 80 % alike, extra words only initials or the manager's
                 name, identical numbers / roman numerals and "non"/"ND"
-                markers - always flagged for review
+                markers; or identical once the manager's brand is dropped
+                ("Scient Smart Beta PMS") - always flagged for review
 
 Non-discretionary names are not in tables B/C (table G has no approaches), so
 they carry no registration number and match on name alone ("name only").
@@ -250,6 +251,15 @@ def _ignorable(word: str, name: str, manager: str | None) -> bool:
     return False
 
 
+def _without_manager(name, manager: str) -> tuple:
+    """Loose key and markers of ``name`` once words of the manager's name are gone."""
+    mwords = set(re.findall(r"[a-z0-9]+", manager.lower()))
+    kept = " ".join(w for w in re.findall(r"[a-z0-9]+", str(name).lower().replace("&", " and "))
+                    if w not in mwords)
+    key = loose_key(kept)
+    return (key, str(_markers(kept))) if len(key) >= 4 else ("", "")
+
+
 def fuzzy_score(a, b, manager: str | None = None, cutoff: float = 0.85) -> float:
     """Similarity if names ``a`` and ``b`` differ only by typos, else 0.
 
@@ -257,6 +267,8 @@ def fuzzy_score(a, b, manager: str | None = None, cutoff: float = 0.85) -> float
     of one name to be the same as or a typo of a word of the other (>= 80 %
     alike), and any word left over to be an initialism or the manager's name.
     """
+    if manager and _without_manager(a, manager) == _without_manager(b, manager) != ("", ""):
+        return 0.9       # same once the manager's brand is dropped ("Scient Smart Beta PMS")
     if _markers(a) != _markers(b):
         return 0.0
     ratio = difflib.SequenceMatcher(None, exact_key(a), exact_key(b)).ratio()
@@ -552,7 +564,7 @@ def write_sheet(wb, rows: list[Match], details: dict[str, dict | None],
         note = m.note
         if a and d is None:
             note = "; ".join(filter(None, [note, "APMI's report page for this approach "
-                                                 "returns no data"]))
+                                                 "shows \"Failed to load data\""]))
         values = [m.approach, m.manager or a.get("pmsName"), m.reg_no,
                   d and d["strategy"], d and SERVICE_LABEL.get(d["serviceType"], d["serviceType"]),
                   d and inception(d["dateOfInception"]),
@@ -641,8 +653,8 @@ class Summary:
              "; ".join(f"{k} {v:,}" for k, v in sorted(self.by_how.items(), key=lambda x: -x[1]))),
             ("IA Insights: every matched row has strategy, service type and inception date",
              "PASS" if not self.no_details else "INFO",
-             f"{self.with_details:,} rows filled; {self.no_details:,} where APMI's report "
-             "page returns no data (noted on the row)"),
+             f"{self.with_details:,} rows filled; {self.no_details:,} where APMI's own report "
+             "page shows \"Failed to load data\" (noted on the row)"),
         ]
         if self.spot:
             n, bad = self.spot
