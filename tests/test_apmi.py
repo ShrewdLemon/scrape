@@ -146,3 +146,19 @@ def test_write_sheet_fills_details_and_links():
     assert ws.cell(5, 10).hyperlink.target == apmi.REPORT_URL.format("a")
     assert ws.cell(6, 4).value is None and ws.cell(6, 9).value == "Not on APMI"
     assert ws.auto_filter.ref == "A4:K6"
+
+
+@pytest.mark.parametrize("a,b,manager", [
+    ("Smart Beta Strategy", "Scient Smart Beta PMS", "Scient Capital Pvt Ltd"),
+    ("IIFL One Mandate Aggressive", "360 ONE Mandate - Aggressive",
+     "360 One Portfolio Managers Limited (Formerly Known As Iifl Wealth Portfolio Managers Limited)"),
+    ("SMIFS LIMITED - Harvest", "HARVEST", "SMIFS LIMITED"),
+])
+def test_fuzzy_accepts_names_that_differ_by_the_managers_brand(a, b, manager):
+    assert apmi.fuzzy_score(a, b, manager) > 0
+
+
+def test_brand_rule_still_needs_the_rest_to_agree():
+    assert apmi.fuzzy_score("SMIFS LIMITED - Harvest", "EVERGREEN", "SMIFS LIMITED") == 0
+    assert apmi.fuzzy_score("Axis Pure Liquid-C", "AXIS SECURITIES PURE LIQUID G",
+                            "Axis Securities Ltd") == 0
