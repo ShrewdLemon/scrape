@@ -235,3 +235,27 @@ era — legacy (2018/2020), the general-information-only gap (Dec 2020 / Jan
 2021), the first months of the new format (Feb–Apr 2021), the current format
 (2024), and a small manager whose sections differ from a large one. The suite
 needs no network.
+
+---
+
+# APMI Insights — investment approaches table (`apmi_insights`)
+
+Scrapes the *Top … based PMS Investment Approaches* table at
+<https://insights.apmiindia.org/investment-approaches/0> into Excel.
+
+```bash
+python -m apmi_insights                  # Equity tab, Since Inception view, every page
+python -m apmi_insights --tab 1          # 0 Equity, 1 Debt, 2 Hybrid, 3 Multi-Asset
+```
+
+* The URL's `/0` is the **asset-class tab**, not a page number; paging happens
+  inside the page, 10 rows at a time.
+* Rows come from the page's Next.js Server Action (`fetchInvestmentApproach`),
+  called directly — no browser needed. Its id is rediscovered from the page's JS
+  on every run, so a site redeploy doesn't break the scraper.
+* The site shows no row total, so the run cross-checks the paged row count
+  against one full-size request and records both in the **Run Info** sheet.
+* Sheet 1 keeps the on-screen column order: IA Details (split into approach and
+  portfolio-manager columns), Service Type, AUM, Inception Date, IA(SI),
+  BENCHMARK(SI), Actions (the "View Details" link). Values are stored as numbers
+  and real dates, formatted the way the site shows them.
