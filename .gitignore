@@ -1,6 +1,8 @@
 # Scraped state and outputs: reproducible, and far too large for git.
 data/
-output/
+output/*
+# ...except the AIF Category III extract: a few KB, and versioning it shows SEBI's revisions.
+!output/aif/
 *.db
 *.db-wal
 *.db-shm

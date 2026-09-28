@@ -235,3 +235,61 @@ era — legacy (2018/2020), the general-information-only gap (Dec 2020 / Jan
 2021), the first months of the new format (Feb–Apr 2021), the current format
 (2024), and a small manager whose sections differ from a large one. The suite
 needs no network.
+
+---
+
+# SEBI AIF statistics — Category III AIFs
+
+`sebi_aif` extracts the **Category III AIF row, every column**, from two tables
+on SEBI's [Data relating to activities of Alternative Investment Funds](https://www.sebi.gov.in/statistics/1392982252002.html)
+page, for every quarter the page carries:
+
+| SEBI table | Columns (Rs crore, cumulative net) | Quarters |
+|---|---|---|
+| **Cumulative net figures as at the end of the quarter ending …** | Commitments Raised, Funds Raised, Investments Made | Sep 2012 → latest (56 as of Jun 2026) |
+| **Cumulative net investment made in equity and debt securities** | Equity/equity linked securities, Debt securities, Units of AIFs/REITs/InVITs, Security Receipts | Mar 2024 → latest (10) |
+
+```bash
+python -m sebi_aif                          # one request, ~3 s; writes output/aif/
+python -m sebi_aif --html saved.html.gz     # re-parse a saved copy, no network
+```
+
+The whole history lives on one static page, so a run is a single GET and
+rebuilds everything; new quarters are picked up as SEBI adds them. Each fetched
+page is archived under `data/aif/raw/`, because SEBI edits the page in place.
+
+### Output — `output/aif/` (committed: a few KB, and diffs show SEBI's revisions)
+
+| File | Contents |
+|---|---|
+| `sebi_aif_category3.xlsx` | `README`, `CatIII_NetFigures`, `CatIII_EquityDebt`, `CatIII_Combined` |
+| `csv/CatIII_NetFigures.csv` | the headline table, one row per quarter |
+| `csv/CatIII_EquityDebt.csv` | the equity and debt table, one row per quarter |
+| `csv/CatIII_Combined.csv` | both side by side (equity and debt blank before Mar 2024) |
+
+Rows run oldest first with `Quarter End` (a real date), `Quarter`, and India's
+April–March `Financial Year` / `FY Quarter`, so the sheets chart and pivot directly.
+
+### Quirks of the source page
+
+* **Four September quarters are headed "December 31".** The sections for
+  Sep 2020, 2021, 2022 and 2023 repeat the heading of the quarter above them.
+  Sections run strictly newest first, one quarter apart, and the industry
+  Grand Total rises in every one, so a repeated heading is re-dated by position
+  and flagged in the `Notes` column. Business Standard's September 2023 figures
+  (Rs 9.54 trn committed; Rs 78,686 crore invested by Category III) match the
+  re-dated section exactly. Any other break in the sequence stops the run
+  rather than being guessed at.
+* **Commented-out HTML.** Retired content, including a whole table, sits inside
+  `<!-- -->`; comments are stripped before anything is located.
+* **Formatting drift.** Headings ("March 31 st , 2024", "30th June 2018") and
+  figures ("1,28,058.26", "46824.91") vary by year, so dates are parsed
+  leniently and columns are matched on header text; a column SEBI adds later is
+  kept instead of being dropped or misaligned.
+* **`-` means nil** and is left blank. Figures are reproduced exactly as
+  published; Category III cumulative figures do fall in some quarters (e.g.
+  Sep 2019, Jun 2020, Sep 2022).
+
+Code: `sebi_aif/parse.py` (sections, dating, Category III rows), `fetch.py`,
+`excel.py`, `cli.py`, reusing `sebi_pmr/tables.py` for span-aware table
+expansion. Tests: `tests/test_aif.py`, offline against a captured copy of the page.
