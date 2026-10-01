@@ -402,7 +402,7 @@ column letter from each sheet. Recalculated in LibreOffice: 117,110 formulas,
 0 errors, and all 2,446 split days are within 0.1 crore.
 
 **Merged 2001 → 2026 edition:** `outputs/NSDL_FPI_Equity_by_Route_2001-2026.xlsx`
-uses the same four-sheet layout and runs from 01 Jan 2001 to 30 Sep 2026: 6,269
+uses the same layout and runs from 01 Jan 2001 to 30 Sep 2026: 6,269
 days, 4,055 of them with the route split. It merges the 2001–2020 workbook with
 a separately supplied `FPI_Equity_Jan2020_Sep2026.xlsx` (01 Jan 2020 – 08 Sep 2026).
 Every one of that file's 1,617 days matched a fresh NSDL scrape exactly, on all
