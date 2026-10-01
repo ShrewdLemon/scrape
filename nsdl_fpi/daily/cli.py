@@ -14,6 +14,7 @@ from .excel import (ROUTE_COLS, check, check_routes, daily_rows, mismatches, rou
                     write_csv, write_workbook)
 from .fetch import ArchiveClient, months
 from .parse import parse_month
+from .route_workbook import write_route_workbook
 
 log = logging.getLogger("nsdl_fpi.daily")
 
@@ -32,6 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--end", type=_ym, default=(2020, 1), help="last month, YYYY-MM (default 2020-01)")
     p.add_argument("-o", "--output", default="output/nsdl_fpi_daily_equity.xlsx")
     p.add_argument("--csv", default="output/nsdl_fpi_daily_equity.csv", help="'' to skip")
+    p.add_argument("--route-workbook", default="output/nsdl_fpi_equity_by_route.xlsx",
+                   help="four-sheet workbook: Total / Stock Exchange / Primary / Combined (formulas); '' to skip")
     p.add_argument("--routes-csv", default="output/nsdl_fpi_daily_equity_routes.csv",
                    help="equity split by investment route ('' to skip)")
     p.add_argument("--raw-dir", default="output/raw_daily",
@@ -91,6 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     if a.csv:
         write_csv(a.csv, daily_rows(reports))
         log.info("wrote %s", a.csv)
+    if a.route_workbook:
+        write_route_workbook(a.route_workbook, reports)
+        log.info("wrote %s", a.route_workbook)
     if a.routes_csv:
         write_csv(a.routes_csv, route_rows(reports), ROUTE_COLS)
         log.info("wrote %s", a.routes_csv)

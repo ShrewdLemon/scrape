@@ -44,6 +44,7 @@ jobs:
             -o output/nsdl_fpi_daily_equity.xlsx \
             --csv output/nsdl_fpi_daily_equity.csv \
             --routes-csv output/nsdl_fpi_daily_equity_routes.csv \
+            --route-workbook output/nsdl_fpi_equity_by_route.xlsx \
             --raw-dir output/raw_daily \
             --strict
 
@@ -72,5 +73,6 @@ jobs:
             output/nsdl_fpi_daily_equity.xlsx
             output/nsdl_fpi_daily_equity.csv
             output/nsdl_fpi_daily_equity_routes.csv
+            output/nsdl_fpi_equity_by_route.xlsx
             output/raw_daily
           retention-days: 90
