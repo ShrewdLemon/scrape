@@ -10,7 +10,8 @@ import os
 import sys
 import time
 
-from .excel import check, daily_rows, mismatches, write_csv, write_workbook
+from .excel import (ROUTE_COLS, check, check_routes, daily_rows, mismatches, route_rows,
+                    write_csv, write_workbook)
 from .fetch import ArchiveClient, months
 from .parse import parse_month
 
@@ -31,6 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--end", type=_ym, default=(2020, 1), help="last month, YYYY-MM (default 2020-01)")
     p.add_argument("-o", "--output", default="output/nsdl_fpi_daily_equity.xlsx")
     p.add_argument("--csv", default="output/nsdl_fpi_daily_equity.csv", help="'' to skip")
+    p.add_argument("--routes-csv", default="output/nsdl_fpi_daily_equity_routes.csv",
+                   help="equity split by investment route ('' to skip)")
     p.add_argument("--raw-dir", default="output/raw_daily",
                    help="keep each fetched month page here ('' to skip); reused on reruns")
     p.add_argument("--offline", action="store_true", help="rebuild from --raw-dir only, no network")
@@ -88,11 +91,14 @@ def main(argv: list[str] | None = None) -> int:
     if a.csv:
         write_csv(a.csv, daily_rows(reports))
         log.info("wrote %s", a.csv)
+    if a.routes_csv:
+        write_csv(a.routes_csv, route_rows(reports), ROUTE_COLS)
+        log.info("wrote %s", a.routes_csv)
 
     bad = mismatches(reports)
     for r in bad:
-        log.warning("%d-%02d does not reconcile: daily sum %s vs NSDL %s",
-                    r.year, r.month, r.computed_net_inr, r.stated and r.stated[2])
+        log.warning("%d-%02d does not reconcile: daily sum %s vs NSDL %s; worst route diff %s",
+                    r.year, r.month, r.computed_net_inr, r.stated and r.stated[2], check_routes(r)[0])
     days = sum(len(r.days) for r in reports)
     fb = sum(len(r.fallback_days) for r in reports)
     log.info("done in %.0fs: %d months (%d fetched), %d days, %d on Total-row fallback, "
