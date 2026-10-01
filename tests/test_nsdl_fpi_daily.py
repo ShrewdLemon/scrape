@@ -180,3 +180,46 @@ def test_workbook_and_csv(tmp_path):
     assert [c.value for c in wb["Routes_Monthly"][2]][-1] == "yes"
     write_csv(str(tmp_path / "routes.csv"), rr, ROUTE_COLS)
     assert (tmp_path / "routes.csv").read_text().splitlines()[1].startswith("2009-12-01,2009,12,2812.3,2274.7,537.5")
+
+
+# --- four-sheet route workbook -------------------------------------------------
+
+def test_fy_label_and_formula():
+    from nsdl_fpi.daily.route_workbook import fy_formula, fy_label
+    assert fy_label(date(2010, 3, 31)) == "FY 2009-10"
+    assert fy_label(date(2010, 4, 1)) == "FY 2010-11"
+    assert fy_label(date(2001, 1, 1)) == "FY 2000-01"
+    assert fy_formula("A5").startswith("=IF(MONTH(A5)>=4,")
+
+
+def test_route_workbook_layout(tmp_path):
+    from openpyxl import load_workbook
+    from nsdl_fpi.daily.route_workbook import FIRST, HEADER_ROW, write_route_workbook
+    reps = [parse_month(page(y, m), y, m) for y, m in ALL]
+    out = tmp_path / "routes.xlsx"
+    info = write_route_workbook(str(out), reps)
+    n_total = sum(len(r.days) for r in reps)
+    n_route = sum(1 for r in reps for d in r.days if d.routes)
+    assert info["total_rows"] == n_total
+    assert info["route_rows"] == {"Stock Exchange": n_route, "Primary": n_route}
+    wb = load_workbook(out)
+    assert wb.sheetnames == ["Total", "Stock Exchange", "Primary", "Combined"]
+    for name in ("Total", "Stock Exchange", "Primary"):
+        ws = wb[name]
+        assert [c.value for c in ws[HEADER_ROW]][3] == "FY"
+        assert ws[f"D{FIRST}"].value.startswith("=IF(MONTH(A5)")
+    se = wb["Stock Exchange"]
+    assert [se.cell(row=FIRST, column=c).value for c in range(5, 10)] == \
+        ["Stock Exchange", 2812.3, 2274.7, 537.5, 115.64]
+    assert wb["Primary"].cell(row=FIRST, column=8).value == 162.3
+    assert wb["Total"].max_row == FIRST + n_total - 1
+    cb = wb["Combined"]
+    assert cb.max_row >= FIRST + n_total - 1
+    assert [c.value for c in cb[HEADER_ROW]][:5] == ["Date", "Year", "Month", "FY", "Route split published?"]
+    assert cb[f"A{FIRST}"].value == f"=Total!A{FIRST}"
+    assert "MATCH($A5,'Stock Exchange'!$A$5:" in cb[f"V{FIRST}"].value
+    assert cb[f"L{FIRST}"].value.startswith("=IF($V5=\"\",\"\",INDEX('Stock Exchange'!H$5:")
+    assert cb[f"T{FIRST}"].value.count("$T$2") == 1 and cb["T2"].value == 0.1
+    assert cb.column_dimensions["V"].hidden and cb.column_dimensions["W"].hidden
+    heads = [c.value for c in cb[3] if c.value]
+    assert "SUMMARY BY FINANCIAL YEAR (Apr-Mar)" in heads and "SUMMARY BY CALENDAR YEAR" in heads
