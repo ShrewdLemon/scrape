@@ -1,0 +1,73 @@
+name: nsdl-fpi-daily-equity
+
+# Daily FPI investment in equity, from NSDL's Archive ("Daily Trends") report:
+# https://www.fpi.nsdl.co.in/web/Reports/Archive.aspx
+#
+# One postback per month returns every reporting day of that month, so
+# Jan 2001 - Jan 2020 is 229 requests. At the default 1-2 s spacing the
+# scrape measured 5m 46s; the job end-to-end is ~7-8 minutes. The archive is
+# historical, so this runs on demand only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "First month (YYYY-MM)"
+        default: "2001-01"
+      end:
+        description: "Last month (YYYY-MM)"
+        default: "2020-01"
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      # --strict fails the job if any month's daily equity rows stop summing to
+      # NSDL's own "Total for <Month>" equity row.
+      - name: Scrape and build the workbook
+        run: |
+          python -m nsdl_fpi.daily \
+            --start ${{ inputs.start || '2001-01' }} \
+            --end ${{ inputs.end || '2020-01' }} \
+            -o output/nsdl_fpi_daily_equity.xlsx \
+            --csv output/nsdl_fpi_daily_equity.csv \
+            --raw-dir output/raw_daily \
+            --strict
+
+      - name: Summary
+        if: success()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import csv
+          from collections import defaultdict
+          rows = list(csv.DictReader(open("output/nsdl_fpi_daily_equity.csv")))
+          by_year = defaultdict(float)
+          for r in rows:
+              by_year[r["Year"]] += float(r["Net Investment (Rs Crore)"] or 0)
+          fb = sum(r["Basis"] == "Total row" for r in rows)
+          print(f"### FPI daily equity - {len(rows)} days, {rows[0]['Date']} to {rows[-1]['Date']}, {fb} Total-row fallbacks\n")
+          print("| Year | Net equity (Rs Crore) |\n|---|---:|")
+          for y, v in sorted(by_year.items()):
+              print(f"| {y} | {v:,.0f} |")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nsdl-fpi-daily-equity
+          path: |
+            output/nsdl_fpi_daily_equity.xlsx
+            output/nsdl_fpi_daily_equity.csv
+            output/raw_daily
+          retention-days: 90
