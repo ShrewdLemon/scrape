@@ -49,7 +49,8 @@ class NsdlClient:
     """Keeps the WebForms state between postbacks, with polite spacing and retries."""
 
     def __init__(self, min_delay: float = 1.0, max_delay: float = 2.0,
-                 retries: int = 4, timeout: float = 60.0):
+                 retries: int = 4, timeout: float = 60.0, url: str = URL):
+        self.url = url
         self.session = requests.Session()
         self.session.headers["User-Agent"] = DEFAULT_UA
         self.min_delay, self.max_delay = min_delay, max_delay
@@ -64,12 +65,12 @@ class NsdlClient:
             time.sleep(sleep)
         self._last = time.monotonic()
 
-    def _request(self, method: str, **kw) -> str:
+    def _request(self, method: str, expect: str = "tbls01", **kw) -> str:
         for attempt in range(1, self.retries + 1):
             self._wait()
             try:
-                r = self.session.request(method, URL, timeout=self.timeout, **kw)
-                if r.status_code == 200 and "tbls01" in r.text:
+                r = self.session.request(method, self.url, timeout=self.timeout, **kw)
+                if r.status_code == 200 and expect in r.text:
                     return r.text
                 log.warning("attempt %d: HTTP %s, %d bytes", attempt, r.status_code, len(r.text))
             except requests.RequestException as exc:
@@ -80,7 +81,7 @@ class NsdlClient:
 
     def landing(self) -> str:
         if self._page is None:
-            self._page = self._request("GET")
+            self._page = self._request("GET", expect="__VIEWSTATE")
         return self._page
 
     def year(self, year: int, currency: str = "INR") -> str:

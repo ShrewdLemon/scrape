@@ -1,0 +1,145 @@
+"""NSDL daily (Archive) equity scraper - offline, against real captured pages.
+
+Fixtures span both layouts: 2001-01 and 2009-11 (flat Equity/Debt rows),
+2009-12 (first month with Stock Exchange / Primary / Sub-total routes) and
+2020-01 (routes plus Hybrid and Debt-VRR). The Total-row fallback never fires
+on real 2001-2020 data, so it is exercised with small synthetic tables.
+"""
+from __future__ import annotations
+
+import gzip
+import os
+import sys
+from datetime import date
+
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from nsdl_fpi.daily.excel import check, daily_rows, mismatches, write_csv, write_workbook
+from nsdl_fpi.daily.fetch import month_end, months
+from nsdl_fpi.daily.parse import (BASIS_EQUITY, BASIS_ROUTES, BASIS_SUBTOTAL, BASIS_TOTAL,
+                                  BASIS_TOTAL_SUM, FormatError, parse_month)
+
+FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "nsdl_daily")
+ALL = [(2001, 1), (2009, 11), (2009, 12), (2020, 1)]
+
+
+def page(y: int, m: int) -> str:
+    with gzip.open(os.path.join(FIX, f"{y}-{m:02d}.html.gz"), "rt", encoding="utf-8") as fh:
+        return fh.read()
+
+
+@pytest.mark.parametrize("y,m", ALL)
+def test_daily_equity_reconciles_with_month_total(y, m):
+    rep = parse_month(page(y, m), y, m)
+    di, du, ok = check(rep)
+    assert ok, (di, du)
+    assert not rep.fallback_days
+    assert all(d.day.year == y and d.day.month == m for d in rep.days)
+
+
+def test_flat_layout_takes_the_equity_row():
+    rep = parse_month(page(2001, 1), 2001, 1)
+    assert rep.layout == "flat" and len(rep.days) == 22
+    d = rep.days[0]
+    assert (d.day, d.basis) == (date(2001, 1, 1), BASIS_EQUITY)
+    assert (d.gross_purchases, d.gross_sales, d.net_inr, d.net_usd, d.fx) == (522.4, 189.5, 332.9, 71.2, 46.75)
+    assert rep.stated[2] == 4045 and rep.computed_net_inr == 4045
+
+
+def test_routed_layout_takes_the_equity_subtotal_not_stock_exchange():
+    rep = parse_month(page(2009, 12), 2009, 12)
+    assert rep.layout == "routed"
+    d = rep.days[0]
+    assert d.basis == BASIS_SUBTOTAL
+    assert (d.gross_purchases, d.net_inr, d.net_usd) == (2976.1, 699.8, 150.57)
+    assert {x.basis for x in rep.days} == {BASIS_SUBTOTAL}
+
+
+def test_negatives_and_extra_categories():
+    rep = parse_month(page(2020, 1), 2020, 1)
+    assert rep.categories == ["Debt", "Debt-VRR", "Equity", "Hybrid"]
+    d = rep.days[0]
+    assert d.net_inr == -1972.18 and d.net_usd == -276.7 and d.fx == 71.274
+    assert rep.computed_net_inr == rep.stated[2] == 12122.58
+
+
+def test_refuses_page_for_another_month():
+    with pytest.raises(FormatError):
+        parse_month(page(2009, 12), 2009, 11)
+
+
+def test_refuses_page_without_table():
+    with pytest.raises(FormatError):
+        parse_month("<html><body>maintenance</body></html>", 2010, 1)
+
+
+# --- fallback to the Total row (synthetic) ----------------------------------
+
+HEAD = ("<table class='tbls01'><tr><th colspan='8'>Daily Trends in FPI Investments up to 31-Jan-2015</th></tr>"
+        "<tr><th>Reporting Date</th><th>Debt/Equity</th><th>Investment Route</th><th>Gross Purchases(Rs Crore)</th>"
+        "<th>Gross Sales(Rs Crore)</th><th>Net Investment (Rs Crore)</th><th>Net Investment US($) million</th>"
+        "<th>Conversion</th></tr>")
+
+
+def _day(d, rows, fx="Rs.62.0000"):
+    first, *rest = rows
+    html = f"<tr><td rowspan='{len(rows)}'>{d}</td>{first}<td rowspan='{len(rows)}'> {fx}</td></tr>"
+    return html + "".join(f"<tr>{r}</tr>" for r in rest)
+
+
+def test_missing_equity_falls_back_to_total_row():
+    html = HEAD + _day("02-Jan-2015", [
+        "<td rowspan='3'>Equity</td><td>Stock Exchange</td><td>-</td><td>-</td><td>-</td><td>-</td>",
+        "<td>Primary market & others</td><td>-</td><td>-</td><td>-</td><td>-</td>",
+        "<td>Sub-total</td><td>-</td><td>-</td><td>-</td><td>-</td>",
+        "<td rowspan='2'>Debt</td><td>Sub-total</td><td>10.00</td><td>5.00</td><td>5.00</td><td>0.08</td>",
+        "<td>Total</td><td>110.00</td><td>15.00</td><td>95.00</td><td>1.53</td>",
+    ]) + "</table>"
+    d, = parse_month(html, 2015, 1).days
+    assert (d.basis, d.net_inr, d.net_usd, d.fx) == (BASIS_TOTAL, 95.0, 1.53, 62.0)
+
+
+def test_equity_routes_summed_when_no_subtotal():
+    html = HEAD + _day("02-Jan-2015", [
+        "<td rowspan='2'>Equity</td><td>Stock Exchange</td><td>100.00</td><td>40.00</td><td>60.00</td><td>0.97</td>",
+        "<td>Primary market & others</td><td>1.50</td><td>0.50</td><td>1.00</td><td>0.02</td>",
+        "<td>Total</td><td>101.50</td><td>40.50</td><td>61.00</td><td>0.99</td>",
+    ]) + "</table>"
+    d, = parse_month(html, 2015, 1).days
+    assert (d.basis, d.gross_purchases, d.net_inr) == (BASIS_ROUTES, 101.5, 61.0)
+
+
+def test_flat_layout_without_equity_sums_categories():
+    html = HEAD + _day("02-Jan-2015", [
+        "<td>Debt</td><td>10.00</td><td>4.00</td><td>6.00</td><td>0.10</td>",
+        "<td>Hybrid</td><td>1.00</td><td>0.00</td><td>1.00</td><td>0.02</td>",
+    ]) + "</table>"
+    d, = parse_month(html, 2015, 1).days
+    assert (d.basis, d.net_inr, d.net_usd) == (BASIS_TOTAL_SUM, 7.0, 0.12)
+
+
+# --- helpers & output ---------------------------------------------------------
+
+def test_month_helpers():
+    assert month_end(2004, 2) == date(2004, 2, 29)
+    span = months((2001, 1), (2020, 1))
+    assert len(span) == 229 and span[0] == (2001, 1) and span[-1] == (2020, 1)
+
+
+def test_workbook_and_csv(tmp_path):
+    from openpyxl import load_workbook
+    reps = [parse_month(page(y, m), y, m) for y, m in ALL]
+    assert mismatches(reps) == []
+    out = tmp_path / "daily.xlsx"
+    write_workbook(str(out), reps)
+    wb = load_workbook(out)
+    assert wb.sheetnames == ["README", "Equity_Daily", "Monthly", "INR_by_Year", "Fallbacks"]
+    rows = daily_rows(reps)
+    assert wb["Equity_Daily"].max_row == len(rows) + 1 == sum(len(r.days) for r in reps) + 1
+    assert wb["Equity_Daily"]["D2"].value == BASIS_EQUITY
+    assert [c.value for c in wb["Monthly"][2]][-1] == "yes"
+    csv_path = tmp_path / "daily.csv"
+    write_csv(str(csv_path), rows)
+    assert csv_path.read_text().splitlines()[1].startswith("2001-01-01,2001,1,Equity,522.4")

@@ -171,6 +171,7 @@ Two more things worth knowing when joining this data:
 | `monthly-update.yml` | 15th & 25th monthly, or manual | Re-scrapes a trailing 3-month window to catch late filers, rebuilds the workbook |
 | `backfill.yml` | manual | Sharded historical sweep with cached per-shard state and a wall-clock budget |
 | `nsdl-fpi-equity.yml` | 3rd monthly, or manual | NSDL FPI monthly equity flows, 2002 to date (~2 min) — see below |
+| `nsdl-fpi-daily-equity.yml` | manual | NSDL FPI **daily** equity, Jan 2001 – Jan 2020 (~8 min) — see below |
 
 `backfill.yml` gives each shard its own SQLite file so parallel shards never
 contend, caches that file between runs so re-running resumes, and merges the
@@ -299,3 +300,64 @@ The current year is partial (only months NSDL has published), and NSDL notes
 recent figures are compiled from custodian reports and can be revised — the
 monthly workflow re-scrapes the whole history each run, so revisions flow in.
 
+# NSDL FPI equity — daily, Jan 2001 to Jan 2020
+
+`nsdl_fpi/daily/` scrapes NSDL's **Archive (Trends in FPI/FII Investments)**
+report, <https://www.fpi.nsdl.co.in/web/Reports/Archive.aspx>, and keeps only
+the **Equity** row for every reporting day.
+
+```bash
+python -m nsdl_fpi.daily                          # 2001-01 .. 2020-01 -> output/nsdl_fpi_daily_equity.xlsx
+python -m nsdl_fpi.daily --start 2008-01 --end 2009-12
+python -m nsdl_fpi.daily --offline                # rebuild from output/raw_daily, no network
+```
+
+## How the page works, and why it is only 229 requests
+
+The page takes one input, a "To Date", and returns **every reporting day of
+that month up to the date**, plus month / year / grand totals (and a
+derivatives table, which is ignored). Asking for each month-end therefore
+returns the whole month. Jan 2001 to Jan 2020 is 229 postbacks, not ~4,800
+daily ones. Pages are cached in `--raw-dir`, so a re-run only fetches what is
+missing.
+
+| Step | Time |
+|---|---|
+| Fetch 229 month pages (1–2 s polite gap, ~0.5 s per response) | **5 m 46 s** measured |
+| Parse + reconcile + write Excel/CSV | ~9 s |
+| Re-run with the raw pages cached (`--offline`) | ~9 s |
+| GitHub Actions job end-to-end (setup + scrape + upload) | ~7–8 min estimated |
+
+## Which row is "Equity"
+
+| Period | Layout | Equity value taken |
+|---|---|---|
+| 2001-01 … 2009-11 | flat: one `Equity` and one `Debt` row per day | the `Equity` row |
+| 2009-12 … 2020-01 | routed: each category split into Stock Exchange / Primary market & others / Sub-total, then a day `Total`; Hybrid from 2017-11, Debt-VRR in 2020-01 | the **Equity Sub-total** |
+
+If a day has no equity figures, the parser falls back to that day's `Total`
+row. The flat layout has no Total row, so there it uses the sum of the
+categories. Such days are marked in the `Basis` column, highlighted, and listed
+on the `Fallbacks` sheet. On the real 2001–2020 data the fallback never
+triggers: all 4,660 days have an equity row.
+
+## Reconciliation
+
+Each month's daily equity figures are summed and compared with NSDL's own
+`Total for <Month>` equity row. All 229 months agree to within 0.4 crore /
+0.4 US$ mn, which is two-decimal rounding. `--strict` fails the run if any
+month is off by more than 1.
+
+## Workbook
+
+| Sheet | Contents |
+|---|---|
+| `README` | Source, coverage, basis rules, units |
+| `Equity_Daily` | Date, Basis, Gross Purchases, Gross Sales, Net (Rs Cr), Net (US$ mn), USD/INR rate — one row per reporting day |
+| `Monthly` | Daily sums vs NSDL's month total, with the difference and an OK flag |
+| `INR_by_Year` | Net equity per month (Rs Cr), years down, with an annual bar chart |
+| `Fallbacks` | Days where the Total row stood in for Equity (none in 2001–2020) |
+
+A snapshot is committed at `outputs/NSDL_FPI_Daily_Equity_2001-01_to_2020-01.xlsx`.
+Six reporting dates in 2004–2006 fall on Saturdays. They are kept as NSDL
+reports them.
