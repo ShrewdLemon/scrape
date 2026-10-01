@@ -400,6 +400,16 @@ Basis/Route, F–I values, J USD/INR), so each `Combined` formula reads the same
 column letter from each sheet. Recalculated in LibreOffice: 117,110 formulas,
 0 errors, and all 2,446 split days are within 0.1 crore.
 
+**Merged 2001 → 2026 edition:** `outputs/NSDL_FPI_Equity_by_Route_2001-2026.xlsx`
+uses the same four-sheet layout and runs from 01 Jan 2001 to 30 Sep 2026: 6,269
+days, 4,055 of them with the route split. It merges the 2001–2020 workbook with
+a separately supplied `FPI_Equity_Jan2020_Sep2026.xlsx` (01 Jan 2020 – 08 Sep 2026).
+Every one of that file's 1,617 days matched a fresh NSDL scrape exactly, on all
+11 values. The fresh scrape also supplies two things the supplied file lacks:
+Total gross purchases/sales from Feb 2020 (NSDL's Equity Sub-total), and the
+days 09–30 Sep 2026. To rebuild it:
+`python -m nsdl_fpi.daily --start 2001-01 --end 2026-09`.
+
 openpyxl writes formulas without cached results, so the workbook is flagged to
 recalculate on open. Excel fills it in immediately. To give previewers values
 too, recalculate it once in LibreOffice/Excel, as was done for the snapshot.

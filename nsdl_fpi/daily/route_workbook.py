@@ -109,12 +109,15 @@ def _data_sheet(wb, name, title, note, label, rows):
     return last
 
 
-def write_route_workbook(path: str, reports: list[MonthReport]) -> dict:
+def write_route_workbook(path: str, reports: list[MonthReport], note: str = "") -> dict:
+    """``note`` is appended to the provenance line on every sheet (e.g. merge sources)."""
     reports = sorted(reports, key=lambda r: (r.year, r.month))
     days = [d for r in reports for d in r.days]
     routed = [d for d in days if d.routes]
     split_from = routed[0].day if routed else None
-    stamp = f"Source: NSDL Archive (Daily Trends in FPI Investments), {URL} - scraped {datetime.now(timezone.utc):%Y-%m-%d} UTC."
+    stamp = (f"Source: NSDL Archive (Daily Trends in FPI Investments), {URL} - scraped "
+             f"{datetime.now(timezone.utc):%Y-%m-%d} UTC. "
+             f"Coverage {days[0].day:%d %b %Y} to {days[-1].day:%d %b %Y}." + (f" {note}" if note else ""))
 
     wb = Workbook()
     wb.remove(wb.active)
