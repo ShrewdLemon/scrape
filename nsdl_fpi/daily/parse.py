@@ -19,6 +19,9 @@ Per day the equity figure is, in order of preference: the Equity
 - and only if the day has no equity figures at all, its ``Total`` row (or, in
 the flat layout which has no total row, the sum of all categories). The
 ``basis`` field records which one was used.
+
+In the routed layout the three equity route rows themselves (Stock Exchange,
+Primary market & others, Sub-total) are kept too, as ``DayEquity.routes``.
 """
 from __future__ import annotations
 
@@ -29,7 +32,8 @@ from datetime import date, datetime
 from ..parse import FormatError, MONTHS, _Rows, to_number
 
 VALUE_COLS = ("gross_purchases", "gross_sales", "net_inr", "net_usd")
-ROUTES = {"stock exchange", "primary market & others", "sub-total"}
+ROUTE_NAMES = ("Stock Exchange", "Primary market & others", "Sub-total")
+ROUTES = {r.lower() for r in ROUTE_NAMES}
 
 _DATE = re.compile(r"^\d{2}-[A-Za-z]{3}-\d{4}$")
 _TITLE = re.compile(r"Daily Trends in FPI Investments\s+up\s*to\s+(\d{2}-[A-Za-z]{3}-\d{4})", re.I)
@@ -71,6 +75,12 @@ class Block:
     label: str                # a date string, "Total for January", "Total for 2010", "Grand Total ..."
     fx: float | None = None
     entries: list[Entry] = field(default_factory=list)
+
+    def equity_routes(self) -> dict[str, tuple]:
+        """{"Stock Exchange" | "Primary market & others" | "Sub-total": values} for Equity."""
+        canon = {r.lower(): r for r in ROUTE_NAMES}
+        return {canon[e.route.lower()]: e.values for e in self.entries
+                if not e.is_total and (e.category or "").lower() == "equity" and e.route}
 
     def pick(self) -> tuple[str, tuple] | None:
         """(basis, values) per the preference order in the module docstring."""
@@ -116,6 +126,7 @@ class DayEquity:
     net_inr: float | None
     net_usd: float | None
     fx: float | None
+    routes: dict[str, tuple] = field(default_factory=dict)   # routed layout only
 
 
 @dataclass
@@ -128,6 +139,7 @@ class MonthReport:
     stated: tuple | None                      # "Total for <Month>" equity values
     stated_basis: str | None
     categories: list[str]
+    stated_routes: dict[str, tuple] = field(default_factory=dict)   # month total, per equity route
 
     @property
     def computed_net_inr(self) -> float:
@@ -136,6 +148,10 @@ class MonthReport:
     @property
     def computed_net_usd(self) -> float:
         return round(sum(d.net_usd or 0 for d in self.days if d.basis in EQUITY_BASES), 2)
+
+    def route_sum(self, route: str, col: int = 2) -> float:
+        """Sum of one equity route over the month (``col`` indexes VALUE_COLS)."""
+        return round(sum(d.routes[route][col] or 0 for d in self.days if route in d.routes), 2)
 
     @property
     def fallback_days(self) -> list[DayEquity]:
@@ -204,7 +220,7 @@ def parse_month(html: str, year: int, month: int) -> MonthReport:
         raise FormatError(f"{year}-{month:02d}: unexpected column headers")
 
     blocks, cats = _blocks(t.rows)
-    days, stated, stated_basis = [], None, None
+    days, stated, stated_basis, stated_routes = [], None, None, {}
     month_label = f"total for {MONTHS[month - 1].lower()}"
     for b in blocks:
         if _DATE.match(b.label):
@@ -215,11 +231,12 @@ def parse_month(html: str, year: int, month: int) -> MonthReport:
             if got is None:
                 raise FormatError(f"{d}: neither an equity nor a total row")
             basis, v = got
-            days.append(DayEquity(d, basis, *v, b.fx))
+            days.append(DayEquity(d, basis, *v, b.fx, b.equity_routes()))
         elif b.label.lower() == month_label and stated is None:
             got = b.pick()
             if got:
                 stated_basis, stated = got
+                stated_routes = b.equity_routes()
     if not days:
         raise FormatError(f"{year}-{month:02d}: no reporting days found")
     seen = [d.day for d in days]
@@ -227,4 +244,4 @@ def parse_month(html: str, year: int, month: int) -> MonthReport:
         raise FormatError(f"{year}-{month:02d}: duplicate reporting dates")
     routed = any(e.route for b in blocks for e in b.entries)
     return MonthReport(year, month, upto, "routed" if routed else "flat", days,
-                       stated, stated_basis, sorted(cats))
+                       stated, stated_basis, sorted(cats), stated_routes)

@@ -335,6 +335,24 @@ missing.
 | 2001-01 … 2009-11 | flat: one `Equity` and one `Debt` row per day | the `Equity` row |
 | 2009-12 … 2020-01 | routed: each category split into Stock Exchange / Primary market & others / Sub-total, then a day `Total`; Hybrid from 2017-11, Debt-VRR in 2020-01 | the **Equity Sub-total** |
 
+## Investment routes (Stock Exchange / Primary market / Sub-total)
+
+From 2009-12 NSDL splits each day's equity into **Stock Exchange**, **Primary
+market & others** and a **Sub-total**. All three rows are kept, each with gross
+purchases, gross sales, net Rs Cr and net US$ mn. They go to the
+`Equity_Routes` sheet and to `output/nsdl_fpi_daily_equity_routes.csv`, which
+covers 2,446 days. Before 2009-12 the page has one undivided Equity row, so
+there is no route split to scrape for those years.
+
+Two checks back this up:
+
+* **Daily:** Stock Exchange + Primary = Sub-total, to within 0.1 crore.
+* **Monthly:** each route's daily sum matches NSDL's `Total for <Month>` row
+  for that route, to within 0.4. This is the `Routes_Monthly` sheet, and
+  `--strict` covers it too.
+
+## Fallback
+
 If a day has no equity figures, the parser falls back to that day's `Total`
 row. The flat layout has no Total row, so there it uses the sum of the
 categories. Such days are marked in the `Basis` column, highlighted, and listed
@@ -356,6 +374,8 @@ month is off by more than 1.
 | `Equity_Daily` | Date, Basis, Gross Purchases, Gross Sales, Net (Rs Cr), Net (US$ mn), USD/INR rate — one row per reporting day |
 | `Monthly` | Daily sums vs NSDL's month total, with the difference and an OK flag |
 | `INR_by_Year` | Net equity per month (Rs Cr), years down, with an annual bar chart |
+| `Equity_Routes` | Per day from 2009-12: Stock Exchange / Primary market & others / Sub-total × (Gross Purchases, Gross Sales, Net Rs Cr, Net US$ mn), plus the USD/INR rate |
+| `Routes_Monthly` | Each route's daily sum vs NSDL's month total for that route |
 | `Fallbacks` | Days where the Total row stood in for Equity (none in 2001–2020) |
 
 A snapshot is committed at `outputs/NSDL_FPI_Daily_Equity_2001-01_to_2020-01.xlsx`.

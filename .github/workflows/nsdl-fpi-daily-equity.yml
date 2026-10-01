@@ -34,7 +34,8 @@ jobs:
       - run: pip install -r requirements.txt
 
       # --strict fails the job if any month's daily equity rows stop summing to
-      # NSDL's own "Total for <Month>" equity row.
+      # NSDL's own "Total for <Month>" equity row, or any equity route (Stock
+      # Exchange / Primary market & others / Sub-total) stops matching its month total.
       - name: Scrape and build the workbook
         run: |
           python -m nsdl_fpi.daily \
@@ -42,6 +43,7 @@ jobs:
             --end ${{ inputs.end || '2020-01' }} \
             -o output/nsdl_fpi_daily_equity.xlsx \
             --csv output/nsdl_fpi_daily_equity.csv \
+            --routes-csv output/nsdl_fpi_daily_equity_routes.csv \
             --raw-dir output/raw_daily \
             --strict
 
@@ -69,5 +71,6 @@ jobs:
           path: |
             output/nsdl_fpi_daily_equity.xlsx
             output/nsdl_fpi_daily_equity.csv
+            output/nsdl_fpi_daily_equity_routes.csv
             output/raw_daily
           retention-days: 90

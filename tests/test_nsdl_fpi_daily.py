@@ -16,10 +16,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from nsdl_fpi.daily.excel import check, daily_rows, mismatches, write_csv, write_workbook
+from nsdl_fpi.daily.excel import (ROUTE_COLS, check, check_routes, daily_rows, mismatches,
+                                  route_rows, write_csv, write_workbook)
 from nsdl_fpi.daily.fetch import month_end, months
 from nsdl_fpi.daily.parse import (BASIS_EQUITY, BASIS_ROUTES, BASIS_SUBTOTAL, BASIS_TOTAL,
-                                  BASIS_TOTAL_SUM, FormatError, parse_month)
+                                  BASIS_TOTAL_SUM, ROUTE_NAMES, FormatError, parse_month)
 
 FIX = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "nsdl_daily")
 ALL = [(2001, 1), (2009, 11), (2009, 12), (2020, 1)]
@@ -55,6 +56,33 @@ def test_routed_layout_takes_the_equity_subtotal_not_stock_exchange():
     assert d.basis == BASIS_SUBTOTAL
     assert (d.gross_purchases, d.net_inr, d.net_usd) == (2976.1, 699.8, 150.57)
     assert {x.basis for x in rep.days} == {BASIS_SUBTOTAL}
+
+
+def test_routes_captured_per_day():
+    rep = parse_month(page(2009, 12), 2009, 12)
+    d = rep.days[0]
+    assert list(d.routes) == list(ROUTE_NAMES)
+    assert d.routes["Stock Exchange"] == (2812.3, 2274.7, 537.5, 115.64)
+    assert d.routes["Primary market & others"] == (163.8, 1.5, 162.3, 34.92)
+    assert d.routes["Sub-total"] == (d.gross_purchases, d.gross_sales, d.net_inr, d.net_usd)
+    for day in rep.days:               # Stock Exchange + Primary = Sub-total, to rounding
+        se, pm, st = (day.routes[n] for n in ROUTE_NAMES)
+        assert all(abs(se[i] + pm[i] - st[i]) <= 0.11 for i in range(4))
+
+
+@pytest.mark.parametrize("y,m", [(2009, 12), (2020, 1)])
+def test_routes_reconcile_with_month_route_totals(y, m):
+    rep = parse_month(page(y, m), y, m)
+    assert set(rep.stated_routes) == set(ROUTE_NAMES)
+    worst, ok = check_routes(rep)
+    assert ok and worst <= 0.5
+
+
+def test_flat_layout_has_no_routes():
+    rep = parse_month(page(2009, 11), 2009, 11)
+    assert all(d.routes == {} for d in rep.days) and rep.stated_routes == {}
+    assert check_routes(rep) == (None, True)
+    assert route_rows([rep]) == []
 
 
 def test_negatives_and_extra_categories():
@@ -135,7 +163,8 @@ def test_workbook_and_csv(tmp_path):
     out = tmp_path / "daily.xlsx"
     write_workbook(str(out), reps)
     wb = load_workbook(out)
-    assert wb.sheetnames == ["README", "Equity_Daily", "Monthly", "INR_by_Year", "Fallbacks"]
+    assert wb.sheetnames == ["README", "Equity_Daily", "Monthly", "INR_by_Year",
+                             "Equity_Routes", "Routes_Monthly", "Fallbacks"]
     rows = daily_rows(reps)
     assert wb["Equity_Daily"].max_row == len(rows) + 1 == sum(len(r.days) for r in reps) + 1
     assert wb["Equity_Daily"]["D2"].value == BASIS_EQUITY
@@ -143,3 +172,11 @@ def test_workbook_and_csv(tmp_path):
     csv_path = tmp_path / "daily.csv"
     write_csv(str(csv_path), rows)
     assert csv_path.read_text().splitlines()[1].startswith("2001-01-01,2001,1,Equity,522.4")
+    rr = route_rows(reps)                # only the routed months: 2009-12 and 2020-01
+    assert len(rr) == len(reps[2].days) + len(reps[3].days)
+    ws = wb["Equity_Routes"]
+    assert ws.max_row == len(rr) + 2     # two header rows
+    assert [c.value for c in ws[3]][3:7] == [2812.3, 2274.7, 537.5, 115.64]
+    assert [c.value for c in wb["Routes_Monthly"][2]][-1] == "yes"
+    write_csv(str(tmp_path / "routes.csv"), rr, ROUTE_COLS)
+    assert (tmp_path / "routes.csv").read_text().splitlines()[1].startswith("2009-12-01,2009,12,2812.3,2274.7,537.5")
