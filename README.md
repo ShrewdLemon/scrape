@@ -170,6 +170,7 @@ Two more things worth knowing when joining this data:
 | `tests.yml` | push / PR | Runs the suite against archived fixtures — never touches the portal |
 | `monthly-update.yml` | 15th & 25th monthly, or manual | Re-scrapes a trailing 3-month window to catch late filers, rebuilds the workbook |
 | `backfill.yml` | manual | Sharded historical sweep with cached per-shard state and a wall-clock budget |
+| `nsdl-fpi-equity.yml` | 3rd monthly, or manual | NSDL FPI monthly equity flows, 2002 to date (~2 min) — see below |
 
 `backfill.yml` gives each shard its own SQLite file so parallel shards never
 contend, caches that file between runs so re-running resumes, and merges the
@@ -235,3 +236,66 @@ era — legacy (2018/2020), the general-information-only gap (Dec 2020 / Jan
 2021), the first months of the new format (Feb–Apr 2021), the current format
 (2024), and a small manager whose sections differ from a large one. The suite
 needs no network.
+
+---
+
+# NSDL FPI equity flows — monthly, 2002 to date
+
+A separate, much smaller scraper (`nsdl_fpi/`) for NSDL's **Monthly FPI Net
+Investments** report: <https://www.fpi.nsdl.co.in/web/Reports/Yearwise.aspx?RptType=6>.
+It takes **only the Equity column**, for every month of every year since 2002,
+in both INR Crores and USD Million.
+
+```bash
+python -m nsdl_fpi                        # 2002 .. latest, INR + USD
+python -m nsdl_fpi --currency INR         # INR only (half the requests)
+python -m nsdl_fpi --offline              # rebuild from output/raw, no network
+```
+
+A snapshot of the result is committed at
+`outputs/NSDL_FPI_Equity_Monthly_2002-2026.xlsx`.
+
+### How it works, and how long it takes
+
+The page is ASP.NET WebForms: the year dropdown and the INR/USD switch are both
+`__doPostBack` round-trips carrying `__VIEWSTATE`. So **one year in one
+currency is one POST** — 25 years × 2 currencies = **50 requests**. Each
+response takes ~0.4 s; with the default 1–2 s politeness gap the full history
+scrapes in **about 75 seconds** (≈2 minutes for the whole CI job, including
+setup). The server drops connections from non-browser user agents, so the
+client sends a browser UA.
+
+| Job | Requests | Time |
+|---|---|---|
+| Full history, INR + USD | 50 | ~75 s |
+| Full history, one currency | 25 | ~40 s |
+| `--offline` rebuild from archived pages | 0 | < 1 s |
+| `nsdl-fpi-equity.yml` end to end | 50 | ~2 min |
+
+### Getting the right "Equity"
+
+The table has changed shape four times — 2002–16: Equity/Debt/Total;
+2017–19 adds Hybrid; 2020–23 adds Debt-VRR; **2024 onward adds Mutual Funds
+(with its own `Equity` sub-column) and AIFs**. The FPI Equity column is always the *first* leaf column; the parser
+anchors on that and refuses the page (`FormatError`) if the first leaf header
+is ever not `Equity`, or if the year or unit on the page isn't what was asked
+for.
+
+Every year is reconciled: the sum of the parsed months must equal NSDL's own
+`Total - YYYY` row. All 50 pages reconcile exactly. `--strict` (used in CI)
+fails the run if any don't.
+
+### Workbook
+
+| Sheet | Contents |
+|---|---|
+| `README` | Source, units, scrape time, caveats |
+| `Equity_Monthly` | One row per month: `Period` (real date), `Year`, `Month`, `Month Name`, `Equity (INR Crores)`, `Equity (USD Million)` |
+| `INR_by_Year` | Years down, Jan–Dec across, NSDL's annual total, plus a bar chart of annual flows |
+| `USD_by_Year` | The same in USD Million |
+| `Check` | Sum of months vs NSDL's stated total, per year and currency |
+
+The current year is partial (only months NSDL has published), and NSDL notes
+recent figures are compiled from custodian reports and can be revised — the
+monthly workflow re-scrapes the whole history each run, so revisions flow in.
+

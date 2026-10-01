@@ -1,0 +1,72 @@
+name: nsdl-fpi-equity
+
+# Monthly FPI net investment in equity, from NSDL's year-wise report:
+# https://www.fpi.nsdl.co.in/web/Reports/Yearwise.aspx?RptType=6
+#
+# The whole 2002-to-date history is one postback per year per currency
+# (~25 years x 2 currencies = ~50 requests). At the default 1-2 s spacing
+# the scrape takes about 75 seconds; the job end-to-end is ~2 minutes.
+# NSDL updates daily, so the run on the 3rd picks up the month just closed.
+
+on:
+  schedule:
+    - cron: "13 3 3 * *"   # 3rd of every month, 03:13 UTC
+  workflow_dispatch:
+    inputs:
+      since:
+        description: "First calendar year"
+        default: "2002"
+      currencies:
+        description: "INR, USD, or 'INR USD'"
+        default: "INR USD"
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+
+      # --strict fails the job if any year's months stop summing to NSDL's
+      # own annual total - the tell-tale of a shifted or renamed column.
+      - name: Scrape and build the workbook
+        run: |
+          python -m nsdl_fpi \
+            --since ${{ inputs.since || '2002' }} \
+            --currency ${{ inputs.currencies || 'INR USD' }} \
+            -o output/nsdl_fpi_equity.xlsx \
+            --csv output/nsdl_fpi_equity.csv \
+            --raw-dir output/raw \
+            --strict
+
+      - name: Summary
+        if: success()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import csv
+          rows = list(csv.DictReader(open("output/nsdl_fpi_equity.csv")))
+          cols = list(rows[0])[3:]
+          print(f"### FPI net equity flows - {len(rows)} months, {rows[0]['Period'][:7]} to {rows[-1]['Period'][:7]}\n")
+          print("| Month | " + " | ".join(cols[1:]) + " |")
+          print("|---|" + "---:|" * (len(cols) - 1))
+          for r in rows[-12:]:
+              print(f"| {r['Period'][:7]} | " + " | ".join(r[c] for c in cols[1:]) + " |")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nsdl-fpi-equity
+          path: |
+            output/nsdl_fpi_equity.xlsx
+            output/nsdl_fpi_equity.csv
+            output/raw
+          retention-days: 90
