@@ -7,6 +7,7 @@ no numbers of its own, only formulas over them:
                        row before Dec 2009, the Equity Sub-total after).
 * ``Stock Exchange`` - the Stock Exchange equity route (Dec 2009 onwards).
 * ``Primary``        - the Primary market & others equity route (Dec 2009 onwards).
+* ``Combined_Monthly`` - one row per month: SUMIFS/COUNTIFS over ``Combined``.
 * ``Combined``       - one row per Total row; links to Total, looks each date up in
                        the two route sheets (MATCH once per row, then INDEX), checks
                        Stock Exchange + Primary against Total, and summarises by year
@@ -275,9 +276,87 @@ def write_route_workbook(path: str, reports: list[MonthReport], note: str = "") 
     nxt = summary(25, "SUMMARY BY CALENDAR YEAR", "Year", "B", years)      # from column Y
     ws.column_dimensions[get_column_letter(nxt)].width = 3
     summary(nxt + 1, "SUMMARY BY FINANCIAL YEAR (Apr-Mar)", "FY", "D", fys)
+
+    n_months = _monthly_sheet(wb, sorted({(d.day.year, d.day.month) for d in days}), last_t, stamp)
     wb.calculation = CalcProperties(fullCalcOnLoad=True)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     wb.save(path)
     return {"total_rows": last_t - FIRST + 1,
             "route_rows": {k: v - FIRST + 1 for k, v in last_r.items()},
-            "years": len(years), "fys": len(fys)}
+            "years": len(years), "fys": len(fys), "months": n_months}
+
+
+def _monthly_sheet(wb, months: list[tuple[int, int]], last_t: int, stamp: str) -> int:
+    """``Combined_Monthly``: one row per month, every figure a SUMIFS/COUNTIFS over Combined.
+
+    A Month | B Year | C Month no. | D FY | E days | F split days | G:J Total |
+    K:N Stock Exchange | O:R Primary | S Total Net on split days | T SE + Primary |
+    U difference | V check
+    """
+    ws = wb.create_sheet("Combined_Monthly")
+    _title(ws, "Combined - monthly summary (all formulas over the Combined sheet)",
+           stamp + " Black = formula, yellow = editable tolerance. Route columns are 0 for months "
+           "before NSDL published the split; Check shows n/a there.")
+    ws["T2"], ws["V2"] = "Check tolerance (Rs Cr):", 1.0
+    ws["T2"].font = F_BOLD
+    ws["T2"].alignment = Alignment(horizontal="right")
+    ws["V2"].font, ws["V2"].fill = F_INPUT, FILL_ASSUMPTION
+    ws["V2"].comment = Comment("Largest |Total Net - (Stock Exchange + Primary)| for a month still treated "
+                               "as OK. Each daily figure is rounded to 2 decimals, so a month's sums can "
+                               "drift by up to about 1 crore.", "scraper")
+
+    bands = [("TOTAL", 7, 10, "Total"), ("STOCK EXCHANGE", 11, 14, "Stock Exchange"),
+             ("PRIMARY MARKET & OTHERS", 15, 18, "Primary"), ("CHECK", 19, 22, "Check")]
+    for label, c0, c1, key in bands:
+        ws.merge_cells(start_row=3, start_column=c0, end_row=3, end_column=c1)
+        c = ws.cell(row=3, column=c0, value=label)
+        c.font, c.fill = F_HEAD, PatternFill("solid", fgColor=FILL_GROUP[key])
+        c.alignment = Alignment(horizontal="center")
+    measures = ["Gross Purchases (Rs Cr)", "Gross Sales (Rs Cr)", "Net (Rs Cr)", "Net (US$ mn)"]
+    _head(ws, HEADER_ROW, ["Month", "Year", "Month No.", "FY", "Reporting days", "Days with route split"]
+          + measures * 3 + ["Total Net on split days (Rs Cr)", "SE + Primary Net (Rs Cr)",
+                            "Difference (Rs Cr)", "Check"], height=45)
+
+    rng = lambda col: f"Combined!${col}${FIRST}:${col}${last_t}"   # noqa: E731
+    sources = dict(zip("GHIJ", "FGHI")) | dict(zip("KLMN", "JKLM")) | dict(zip("OPQR", "NOPQ"))
+    for k, (y, m) in enumerate(months):
+        r = FIRST + k
+        by = f"{rng('B')},$B{r},{rng('C')},$C{r}"
+        a = ws.cell(row=r, column=1, value=datetime(y, m, 1))
+        a.font, a.number_format = F_INPUT, "mmm-yyyy"
+        f = {"B": f"=YEAR(A{r})", "C": f"=MONTH(A{r})", "D": fy_formula(f"A{r}"),
+             "E": f"=COUNTIFS({by})", "F": f'=COUNTIFS({by},{rng("E")},"Yes")',
+             "S": f'=SUMIFS({rng("H")},{by},{rng("E")},"Yes")',
+             "T": f"=M{r}+Q{r}", "U": f"=S{r}-T{r}",
+             "V": f'=IF(F{r}=0,"n/a",IF(ROUND(ABS(U{r}),2)<=$V$2,"OK","CHECK"))'}
+        for col, src in sources.items():
+            f[col] = f"=SUMIFS({rng(src)},{by})"
+        for col, formula in f.items():
+            c = ws[f"{col}{r}"]
+            c.value, c.font = formula, F_CALC
+            if col in "EF":
+                c.number_format = "#,##0"
+            elif col >= "G" and col <= "U":
+                c.number_format = NUM
+            if col in "BCDEFV":
+                c.alignment = Alignment(horizontal="center")
+
+    tr = FIRST + len(months)
+    ws[f"A{tr}"] = "Total"
+    for i in range(1, 23):
+        col = get_column_letter(i)
+        c = ws[f"{col}{tr}"]
+        if col in "EFGHIJKLMNOPQRSTU":
+            c.value = f"=SUM({col}{FIRST}:{col}{tr - 1})"
+            c.number_format = "#,##0" if col in "EF" else NUM
+        c.font = F_BOLD
+        c.border = Border(top=THIN, bottom=Side(style="double", color="000000"))
+
+    widths = {"A": 11, "B": 7, "C": 7, "D": 11, "E": 10, "F": 10, "V": 9}
+    for i in range(1, 23):
+        col = get_column_letter(i)
+        ws.column_dimensions[col].width = widths.get(col, 14)
+    ws.freeze_panes = ws.cell(row=FIRST, column=5)
+    ws.auto_filter.ref = f"A{HEADER_ROW}:V{tr - 1}"
+    return len(months)
+

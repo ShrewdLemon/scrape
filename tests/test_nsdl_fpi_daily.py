@@ -203,7 +203,13 @@ def test_route_workbook_layout(tmp_path):
     assert info["total_rows"] == n_total
     assert info["route_rows"] == {"Stock Exchange": n_route, "Primary": n_route}
     wb = load_workbook(out)
-    assert wb.sheetnames == ["Total", "Stock Exchange", "Primary", "Combined"]
+    assert wb.sheetnames == ["Total", "Stock Exchange", "Primary", "Combined", "Combined_Monthly"]
+    cm = wb["Combined_Monthly"]
+    assert info["months"] == len(ALL) and cm.max_row == FIRST + len(ALL)
+    assert [c.value for c in cm[HEADER_ROW]][:6] == ["Month", "Year", "Month No.", "FY", "Reporting days",
+                                                     "Days with route split"]
+    assert cm[f"I{FIRST}"].value == f"=SUMIFS(Combined!$H$5:$H${FIRST + n_total - 1},Combined!$B$5:$B${FIRST + n_total - 1},$B5,Combined!$C$5:$C${FIRST + n_total - 1},$C5)"
+    assert cm[f"A{FIRST + len(ALL)}"].value == "Total" and cm["V2"].value == 1.0
     for name in ("Total", "Stock Exchange", "Primary"):
         ws = wb[name]
         assert [c.value for c in ws[HEADER_ROW]][3] == "FY"

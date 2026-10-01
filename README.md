@@ -380,10 +380,10 @@ month is off by more than 1.
 
 A snapshot is committed at `outputs/NSDL_FPI_Daily_Equity_2001-01_to_2020-01.xlsx`.
 
-## Four-sheet route workbook (Total / Stock Exchange / Primary / Combined)
+## Route workbook (Total / Stock Exchange / Primary / Combined / Combined_Monthly)
 
 `--route-workbook` (default `output/nsdl_fpi_equity_by_route.xlsx`) writes a
-second, formula-driven workbook. A recalculated snapshot is at
+second, formula-driven workbook with five sheets. A recalculated snapshot is at
 `outputs/NSDL_FPI_Equity_by_Route_2001-2020.xlsx`.
 
 | # | Sheet | Contents |
@@ -392,6 +392,7 @@ second, formula-driven workbook. A recalculated snapshot is at
 | 2 | `Stock Exchange` | The Stock Exchange equity route, Dec 2009 → Jan 2020 (2,446 rows) |
 | 3 | `Primary` | The Primary market & others equity route, same dates |
 | 4 | `Combined` | **Formulas only:** links to `Total`; MATCH/INDEX lookups into the two route sheets by date; SE + Primary vs Total with an OK/CHECK flag against an editable tolerance (`T2`); SUMIFS summaries by calendar year and by FY |
+| 5 | `Combined_Monthly` | **Formulas only:** one row per month (with FY): SUMIFS/COUNTIFS over `Combined` for reporting days, Total / Stock Exchange / Primary gross and net, plus SE + Primary vs Total with an OK/CHECK flag (editable tolerance in `V2`, default 1 crore) and a grand-total row |
 
 Every sheet has an **FY** column for the Indian financial year (April–March),
 e.g. `FY 2009-10`. It is a formula on the date, so it never goes stale. All
